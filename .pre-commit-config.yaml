@@ -22,7 +22,7 @@ repos:
   hooks:
   - id: detect-secrets
     args: [--baseline, .secrets.baseline, --exclude-files]
-    exclude: ^(internal/config/load_test.go|pnpm-lock\.yaml|.*/pnpm-lock\.yaml)$
+    exclude: ^(internal/config/load_test.go|sandbox/seaweedfs-s3.json|pnpm-lock\.yaml|.*/pnpm-lock\.yaml)$
 - repo: local
   hooks:
   - id: prettier
