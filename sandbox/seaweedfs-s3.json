@@ -1,0 +1,18 @@
+{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "ci-access-key",
+      "credentials": [
+        {
+          "accessKey": "anonymous",
+          "secretKey": "anonymous"
+        }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
