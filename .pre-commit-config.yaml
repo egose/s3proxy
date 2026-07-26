@@ -1,6 +1,6 @@
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+  rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # pragma: allowlist secret; frozen: v6.0.0
   hooks:
   - id: check-added-large-files
   - id: check-case-conflict
@@ -13,7 +13,7 @@ repos:
   - id: end-of-file-fixer
   - id: trailing-whitespace
 - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-  rev: 4380fbb73a154b5f5624794c1c78d9719ccc860f  # frozen: v2.16.0
+  rev: 4380fbb73a154b5f5624794c1c78d9719ccc860f  # pragma: allowlist secret; frozen: v2.16.0
   hooks:
   - id: pretty-format-yaml
     args: [--autofix, --indent, '2']
@@ -22,7 +22,7 @@ repos:
   hooks:
   - id: detect-secrets
     args: [--baseline, .secrets.baseline, --exclude-files]
-    exclude: ^(api/alembic.*|pnpm-lock\.yaml|.*/pnpm-lock\.yaml)$
+    exclude: ^(internal/config/load_test.go|pnpm-lock\.yaml|.*/pnpm-lock\.yaml)$
 - repo: local
   hooks:
   - id: prettier
@@ -32,6 +32,14 @@ repos:
     pass_filenames: true
     require_serial: true
     files: \.(ts|tsx|js|jsx|json|css|scss|md|html)$
+    exclude: .git/COMMIT_EDITMSG
+  - id: gofmt
+    name: gofmt
+    entry: .bin/gofmt.sh
+    language: script
+    pass_filenames: true
+    require_serial: true
+    files: \.go$
     exclude: .git/COMMIT_EDITMSG
   - id: commitlint
     name: commitlint
