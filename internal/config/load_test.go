@@ -1,0 +1,266 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+const exampleConfig = `
+listener "http" "public" {
+  address = ":8080"
+
+  addressing {
+    path_style     = true
+    virtual_hosted = true
+    host_suffixes  = ["s3proxy.example.com"]
+  }
+
+  timeouts {
+    read_header = "10s"
+    idle        = "60s"
+    write       = "0s"
+  }
+}
+
+auth "main" {
+  mode = "sigv4_static"
+
+  client "ci" {
+    access_key = "AKIACI123"
+    secret_key = "secretci"
+
+    allow_routes = [
+      "route.images_rw",
+    ]
+
+    visible_buckets = ["images"]
+  }
+}
+
+credential "static" "primary" {
+  access_key = "AKIAPRIMARY"
+  secret_key = "secretprimary"
+}
+
+target "s3" "primary" {
+  endpoint         = "https://minio-a.internal"
+  region           = "us-east-1"
+  force_path_style = true
+  credentials      = "primary"
+}
+
+parser "path_prefix" "images" {
+  prefix = "/images"
+}
+
+parser "bucket_regex" "tenant_logs" {
+  pattern = "^tenant-(?P<tenant>[a-z0-9-]+)-logs$"
+}
+
+route "images_rw" {
+  parser       = "images"
+  operations   = ["GetObject", "PutObject"]
+  destinations = ["primary"]
+  dispatch     = "first"
+  on_match     = "stop"
+  read_preference = "first"
+
+  rewrite {
+    strip_path_prefix  = "/images"
+    prepend_key_prefix = "assets/"
+    bucket             = "images-store"
+  }
+}
+
+bucket "images" {
+  visible_name = "images"
+  route        = "images_rw"
+}
+`
+
+func writeTmpConfig(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.hcl")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadFile_ValidMinimal(t *testing.T) {
+	path := writeTmpConfig(t, exampleConfig)
+	rt, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile failed: %v", err)
+	}
+	if rt.Listener.Address != ":8080" {
+		t.Errorf("expected address :8080, got %q", rt.Listener.Address)
+	}
+	if rt.Auth.Mode != AuthModeSigV4Static {
+		t.Errorf("expected sigv4_static mode")
+	}
+	if _, ok := rt.Targets["primary"]; !ok {
+		t.Error("expected target 'primary'")
+	}
+	if _, ok := rt.Parsers["images"]; !ok {
+		t.Error("expected parser 'images'")
+	}
+	if _, ok := rt.Parsers["tenant_logs"]; !ok {
+		t.Error("expected parser 'tenant_logs'")
+	}
+	if len(rt.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(rt.Routes))
+	}
+	if rt.Routes[0].ParserRef != "images" {
+		t.Errorf("expected parser ref 'images', got %q", rt.Routes[0].ParserRef)
+	}
+	if rt.Routes[0].Rewrite.StripPathPrefix != "/images" {
+		t.Errorf("expected strip_path_prefix /images, got %q", rt.Routes[0].Rewrite.StripPathPrefix)
+	}
+}
+
+func TestLoadFile_NoListener(t *testing.T) {
+	cfg := `
+auth "main" {
+  mode = "none"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for missing listener")
+	}
+}
+
+func TestValidate_DuplicateVisibleBucket(t *testing.T) {
+	cfg := exampleConfig + `
+bucket "images_dup" {
+  visible_name = "images"
+  route        = "images_rw"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for duplicate visible bucket")
+	}
+}
+
+func TestValidate_DuplicateClientAccessKey(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" {
+  mode = "sigv4_static"
+  client "a" { access_key = "SAME" secret_key = "s1" }
+  client "b" { access_key = "SAME" secret_key = "s2" }
+}
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint   = "https://e"
+  region     = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for duplicate access key")
+	}
+}
+
+func TestLoadFile_AuthNone(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" {
+  mode = "none"
+}
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rt.Auth.Mode != AuthModeNone {
+		t.Errorf("expected none mode")
+	}
+}
+
+func TestLoadFile_EnvExpansion(t *testing.T) {
+	os.Setenv("S3PROXY_TEST_KEY", "envkey")
+	defer os.Unsetenv("S3PROXY_TEST_KEY")
+
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" {
+  mode = "none"
+}
+
+credential "static" "c" {
+  access_key = env("S3PROXY_TEST_KEY")
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rt.Targets["t"].Credentials.AccessKey != "envkey" {
+		t.Errorf("expected env-expanded access key 'envkey', got %q", rt.Targets["t"].Credentials.AccessKey)
+	}
+}

@@ -1,0 +1,122 @@
+x-common-props: &common-props
+  platform: linux/amd64
+  restart: unless-stopped
+  networks: [s3proxy]
+
+services:
+  minio:
+    <<: *common-props
+    container_name: s3proxy_minio
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    ports:
+    - 9000:9000
+    - 9001:9001
+    volumes:
+    - s3proxy_minio:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin # pragma: allowlist secret
+    command: server --console-address ":9001" /data
+
+  minio-init:
+    <<: *common-props
+    # See https://hub.docker.com/r/minio/mc/tags
+    image: minio/mc:RELEASE.2025-02-08T19-14-21Z
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc rb --force minio/${MINIO_BUCKET} || true;
+      /usr/bin/mc mb minio/${MINIO_BUCKET};
+      /usr/bin/mc anonymous set download minio/${MINIO_BUCKET};
+      /usr/bin/mc admin user svcacct add minio minioadmin --access-key ${MINIO_ACCESS_KEY} --secret-key ${MINIO_SECRET_KEY} || true;
+      exit 0;
+      "
+    depends_on:
+    - minio
+
+  seaweedfs:
+    <<: *common-props
+    container_name: s3proxy_seaweedfs
+    image: chrislusf/seaweedfs:4.39
+    # `-s3.config=/etc/seaweedfs/s3.json` enables SeaweedFS S3 identity-based
+    # auth so signed requests with the test credentials get Write/List access.
+    # Without this the default anonymous identity is read-only and silently
+    # drops writes when an Authorization header is present.
+    command: server -dir=/data -master -s3 -ip=seaweedfs -s3.config=/etc/seaweedfs/s3.json
+    # Publish only the S3 (:8333) and master (:9333) endpoints. The volume
+    # server's :8080 conflicts with the existing fake-gcs-server service on
+    # the host; the host does not need direct access to it since s3proxy
+    # talks to the in-network `seaweedfs:8333` S3 endpoint.
+    ports:
+    - 9333:9333
+    - 8333:8333
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9333/cluster/status]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+    - s3proxy_seaweedfs_data:/data
+    - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+
+  # SeaweedFS S3 endpoint listens on :8333 inside the network and defaults to
+  # anonymous access. We create a bucket via `mc` so integration tests have a
+  # stable target bucket. If you later configure identity-based SeaweedFS S3,
+  # add the access key / secret via `mc admin user svcacct add` here.
+  seaweedfs-init:
+    <<: *common-props
+    image: minio/mc:RELEASE.2025-02-08T19-14-21Z
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      /usr/bin/mc config host add weed http://seaweedfs:8333 anonymous anonymous;
+      /usr/bin/mc rb --force weed/${SEAWEEDFS_BUCKET} || true;
+      /usr/bin/mc mb weed/${SEAWEEDFS_BUCKET};
+      /usr/bin/mc anonymous set download weed/${SEAWEEDFS_BUCKET};
+      exit 0;
+      "
+    depends_on:
+    - seaweedfs
+
+  azurite:
+    <<: *common-props
+    container_name: s3proxy_azurite
+    # See https://github.com/Azure/Azurite/tags
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    restart: always
+    environment:
+      AZURITE_ACCOUNTS: ${AZURITE_ACCOUNT_NAME}:${AZURITE_ACCOUNT_KEY}
+    ports:
+    - 10000:10000
+    - 10001:10001
+    volumes:
+    - s3proxy_azurite:/home/host
+    command: azurite --blobHost 0.0.0.0 --blobPort 10000 --location /home/host --debug /home/host/azure.log
+
+  # See https://github.com/fsouza/fake-gcs-server
+  # See https://hub.docker.com/r/fsouza/fake-gcs-server/tags
+  fake-gcs-server:
+    <<: *common-props
+    container_name: s3proxy_fake_gcs_server
+    image: fsouza/fake-gcs-server:1.54.0
+    restart: always
+    ports:
+    - ${FAKE_GCP_PORT}:${FAKE_GCP_PORT}
+    volumes:
+    - s3proxy_fake_gcs_server:/data
+    entrypoint: >
+      /bin/sh -c "
+       mkdir -p /data/${FAKE_GCP_BUCKET};
+      /bin/fake-gcs-server -data /data -scheme http -port ${FAKE_GCP_PORT} -public-host localhost:${FAKE_GCP_PORT} -backend memory;
+      "
+
+volumes:
+  s3proxy_minio:
+  s3proxy_seaweedfs_data:
+  s3proxy_azurite:
+  s3proxy_fake_gcs_server:
+
+networks:
+  s3proxy:
+    driver: bridge
