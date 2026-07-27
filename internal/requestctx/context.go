@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/jahn/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/config"
 )
 
 type AddressingMode string

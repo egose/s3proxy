@@ -7,11 +7,11 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/jahn/s3proxy/internal/backend/s3"
-	"github.com/jahn/s3proxy/internal/config"
-	"github.com/jahn/s3proxy/internal/rewrite"
-	"github.com/jahn/s3proxy/internal/router"
-	"github.com/jahn/s3proxy/internal/s3ops"
+	"github.com/egose/s3proxy/internal/backend/s3"
+	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/rewrite"
+	"github.com/egose/s3proxy/internal/router"
+	"github.com/egose/s3proxy/internal/s3ops"
 )
 
 type Result struct {

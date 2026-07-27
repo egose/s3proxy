@@ -1,4 +1,4 @@
-module github.com/jahn/s3proxy
+module github.com/egose/s3proxy
 
 go 1.26
 

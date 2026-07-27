@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/jahn/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/config"
 )
 
 func TestFromRequest_PathStyle(t *testing.T) {

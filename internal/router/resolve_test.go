@@ -3,9 +3,9 @@ package router
 import (
 	"testing"
 
-	"github.com/jahn/s3proxy/internal/config"
-	"github.com/jahn/s3proxy/internal/requestctx"
-	"github.com/jahn/s3proxy/internal/s3ops"
+	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/s3ops"
 )
 
 func buildTestRuntime() *config.Runtime {

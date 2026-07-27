@@ -74,7 +74,7 @@ referenced by other tests/projects in this environment.
 
 - **No comments** in source files unless the surrounding code dictates
   otherwise — the design doc at `docs/design.md` holds the rationale.
-- Module path: `github.com/jahn/s3proxy`.
+- Module path: `github.com/egose/s3proxy`.
 - All HCL blocks use two-label syntax: `listener "http" "public" {}`.
 - Outbound SigV4: AWS SDK v2 `v4.NewSigner().SignHTTP()` with
   `UNSIGNED-PAYLOAD`; the `Content-Length` header MUST be set explicitly

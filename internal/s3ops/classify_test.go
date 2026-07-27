@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/jahn/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/requestctx"
 )
 
 func TestClassify_ListBuckets(t *testing.T) {

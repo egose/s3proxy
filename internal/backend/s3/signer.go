@@ -11,7 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	"github.com/jahn/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/config"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jahn/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/requestctx"
 )
 
 type Operation string
