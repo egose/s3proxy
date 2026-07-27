@@ -50,6 +50,44 @@ forwards them to S3-compatible targets using the destinations' credentials.
 
 See [docs/design.md](docs/design.md) for the full design document.
 
+## Install
+
+### via asdf
+
+Add the plugin:
+
+```sh
+asdf plugin add s3proxy
+# or
+asdf plugin add s3proxy https://github.com/egose/s3proxy.git
+```
+
+Install and activate a version:
+
+```sh
+# List all available versions
+asdf list all s3proxy
+
+# Install a specific version
+asdf install s3proxy <version>
+
+# Install the latest stable version
+asdf install s3proxy latest
+
+# Set the global version
+asdf global s3proxy <version>
+```
+
+Once installed, the `s3proxy` binary is available directly on your `PATH`:
+
+```sh
+s3proxy serve --config /etc/s3proxy/config.hcl
+s3proxy validate --config /etc/s3proxy/config.hcl
+s3proxy version
+```
+
+Please check the [asdf documentation](https://github.com/asdf-vm/asdf) for more details.
+
 ## Example Configuration
 
 ```hcl
