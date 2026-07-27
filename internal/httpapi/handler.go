@@ -5,17 +5,17 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/egose/s3proxy/internal/auth"
+	"github.com/egose/s3proxy/internal/backend/s3"
+	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/dispatch"
+	"github.com/egose/s3proxy/internal/listbuckets"
+	"github.com/egose/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/rewrite"
+	"github.com/egose/s3proxy/internal/router"
+	"github.com/egose/s3proxy/internal/s3ops"
+	"github.com/egose/s3proxy/internal/xmls3"
 	"github.com/google/uuid"
-	"github.com/jahn/s3proxy/internal/auth"
-	"github.com/jahn/s3proxy/internal/backend/s3"
-	"github.com/jahn/s3proxy/internal/config"
-	"github.com/jahn/s3proxy/internal/dispatch"
-	"github.com/jahn/s3proxy/internal/listbuckets"
-	"github.com/jahn/s3proxy/internal/requestctx"
-	"github.com/jahn/s3proxy/internal/rewrite"
-	"github.com/jahn/s3proxy/internal/router"
-	"github.com/jahn/s3proxy/internal/s3ops"
-	"github.com/jahn/s3proxy/internal/xmls3"
 )
 
 type Dependencies struct {

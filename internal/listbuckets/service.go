@@ -4,8 +4,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jahn/s3proxy/internal/auth"
-	"github.com/jahn/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/auth"
+	"github.com/egose/s3proxy/internal/config"
 )
 
 type BucketView struct {

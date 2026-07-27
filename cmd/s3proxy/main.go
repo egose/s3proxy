@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jahn/s3proxy/internal/app"
+	"github.com/egose/s3proxy/internal/app"
 	"github.com/spf13/cobra"
 )
 

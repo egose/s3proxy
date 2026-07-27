@@ -3,8 +3,8 @@ package rewrite
 import (
 	"testing"
 
-	"github.com/jahn/s3proxy/internal/config"
-	"github.com/jahn/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/requestctx"
 )
 
 func TestApply_StripPathPrefix(t *testing.T) {

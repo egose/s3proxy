@@ -2,7 +2,7 @@
   "identities": [
     {
       "name": "anonymous",
-      "actions": ["Read", "Write", "List", "Tagging"]
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
     },
     {
       "name": "ci-access-key",
@@ -12,7 +12,7 @@
           "secretKey": "anonymous"
         }
       ],
-      "actions": ["Read", "Write", "List", "Tagging"]
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
     }
   ]
 }

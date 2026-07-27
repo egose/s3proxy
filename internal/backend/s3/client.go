@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jahn/s3proxy/internal/config"
-	"github.com/jahn/s3proxy/internal/s3ops"
+	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/s3ops"
 )
 
 type Request struct {

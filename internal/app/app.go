@@ -8,14 +8,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/jahn/s3proxy/internal/auth"
-	"github.com/jahn/s3proxy/internal/backend/s3"
-	"github.com/jahn/s3proxy/internal/config"
-	"github.com/jahn/s3proxy/internal/dispatch"
-	"github.com/jahn/s3proxy/internal/httpapi"
-	"github.com/jahn/s3proxy/internal/listbuckets"
-	"github.com/jahn/s3proxy/internal/rewrite"
-	"github.com/jahn/s3proxy/internal/router"
+	"github.com/egose/s3proxy/internal/auth"
+	"github.com/egose/s3proxy/internal/backend/s3"
+	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/dispatch"
+	"github.com/egose/s3proxy/internal/httpapi"
+	"github.com/egose/s3proxy/internal/listbuckets"
+	"github.com/egose/s3proxy/internal/rewrite"
+	"github.com/egose/s3proxy/internal/router"
 )
 
 type BuildOptions struct {
