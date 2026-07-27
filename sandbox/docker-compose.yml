@@ -17,23 +17,33 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin # pragma: allowlist secret
     command: server --console-address ":9001" /data
+    healthcheck:
+      test: [CMD, curl, -sf, http://localhost:9000/minio/health/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   minio-init:
     <<: *common-props
+    restart: no
     # See https://hub.docker.com/r/minio/mc/tags
     image: minio/mc:RELEASE.2025-02-08T19-14-21Z
-    entrypoint: >
-      /bin/sh -c "
-      sleep 10;
-      /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin;
+    entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      set -e;
+      until /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin 2>/dev/null; do echo 'waiting for minio...'; sleep 2; done;
       /usr/bin/mc rb --force minio/${MINIO_BUCKET} || true;
       /usr/bin/mc mb minio/${MINIO_BUCKET};
       /usr/bin/mc anonymous set download minio/${MINIO_BUCKET};
       /usr/bin/mc admin user svcacct add minio minioadmin --access-key ${MINIO_ACCESS_KEY} --secret-key ${MINIO_SECRET_KEY} || true;
+      /usr/bin/mc admin user svcacct list minio minioadmin;
       exit 0;
-      "
     depends_on:
-    - minio
+      minio:
+        condition: service_healthy
 
   seaweedfs:
     <<: *common-props
@@ -52,10 +62,11 @@ services:
     - 9333:9333
     - 8333:8333
     healthcheck:
-      test: [CMD, curl, -f, http://localhost:9333/cluster/status]
+      test: [CMD, curl, -sf, http://localhost:8333/]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 5s
     volumes:
     - s3proxy_seaweedfs_data:/data
     - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
@@ -66,18 +77,22 @@ services:
   # add the access key / secret via `mc admin user svcacct add` here.
   seaweedfs-init:
     <<: *common-props
+    restart: no
     image: minio/mc:RELEASE.2025-02-08T19-14-21Z
-    entrypoint: >
-      /bin/sh -c "
-      sleep 10;
-      /usr/bin/mc config host add weed http://seaweedfs:8333 anonymous anonymous;
+    entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      set -e;
+      until /usr/bin/mc config host add weed http://seaweedfs:8333 anonymous anonymous 2>/dev/null; do echo 'waiting for seaweedfs S3...'; sleep 2; done;
       /usr/bin/mc rb --force weed/${SEAWEEDFS_BUCKET} || true;
       /usr/bin/mc mb weed/${SEAWEEDFS_BUCKET};
       /usr/bin/mc anonymous set download weed/${SEAWEEDFS_BUCKET};
+      /usr/bin/mc ls weed/;
       exit 0;
-      "
     depends_on:
-    - seaweedfs
+      seaweedfs:
+        condition: service_healthy
 
   azurite:
     <<: *common-props

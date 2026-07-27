@@ -182,6 +182,18 @@ sandbox-integration-up: ## Start sandbox + s3proxy pointed at integration config
 	@mkdir -p $(DIST_DIR)
 	@echo "-> starting sandbox stack (detached)"
 	@DAEMON=true $(MAKE) sandbox-up
+	@echo "-> waiting for sandbox init jobs"
+	@set -euo pipefail; \
+	  ids="$$( $(COMPOSE) ps -q minio-init seaweedfs-init )"; \
+	  test -n "$$ids" || { echo "sandbox init containers not found"; exit 1; }; \
+	  for id in $$ids; do \
+	    code="$$(docker wait $$id)"; \
+	    if [ "$$code" != "0" ]; then \
+	      echo "init container $$id exited with $$code"; \
+	      docker logs $$id; \
+	      exit 1; \
+	    fi; \
+	  done
 	@echo "-> building s3proxy"
 	@$(MAKE) build
 	@echo "-> starting s3proxy with $(INTEGRATION_CONFIG) (env from .env)"
