@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
-.PHONY: help build build-all build-single format fmt vet test test-race cover clean \
+.PHONY: help build build-all build-single build-archive format fmt vet test test-race cover clean \
         docker-build docker-run run sandbox-up sandbox-down sandbox-destroy \
         sandbox-reset sandbox-logs sandbox-logs-follow sandbox-ps validate \
         test-integration test-integration-race sandbox-integration-up \
@@ -73,6 +73,16 @@ build-single: ## Build for a single OS:ARCH pair (OS_ARCH=linux:amd64)
 
 build-all: ## Cross-compile for all OS/arch pairs in OS_ARCH_PAIRS
 	@$(foreach pair,$(OS_ARCH_PAIRS),$(MAKE) build-single OS_ARCH=$(pair);)
+
+build-archive: ## Tar each cross-compiled dist/<os>-<arch>/ dir into a release archive
+	@set -e; \
+	for d in $(DIST_DIR)/*-*/; do \
+	  [ -d "$$d" ] || continue; \
+	  name=$$(basename "$$d"); \
+	  archive="$(DIST_DIR)/$(PREFIX)-$$name.tar.gz"; \
+	  (cd "$$d" && tar -czf "$$archive" .); \
+	  echo "archived $$archive"; \
+	done
 
 # --- Quality --------------------------------------------------------------
 
