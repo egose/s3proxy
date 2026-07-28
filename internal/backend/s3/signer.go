@@ -1,11 +1,9 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"net/http"
 	"time"
 
@@ -41,11 +39,14 @@ func captureBodyForSigning(req *http.Request) error {
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil
 	}
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		return err
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return err
+		}
+		req.Body = body
+		return nil
 	}
-	req.Body = io.NopCloser(bytes.NewReader(body))
 	return nil
 }
 

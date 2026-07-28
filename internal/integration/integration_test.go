@@ -117,6 +117,94 @@ func TestFanoutDelete(t *testing.T) {
 	assertStatus(t, resp, respBody, 404)
 }
 
+// TestOrderedFailoverRead proves read-side failover: the /failover/* route
+// tries an intentionally missing first destination, then retries the read
+// against SeaweedFS and returns that response.
+func TestOrderedFailoverRead(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "failover-" + randHex(8)
+	body := []byte("ordered failover " + key)
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/replica/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/failover/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("returned body %q does not match written %q", string(respBody), string(body))
+	}
+}
+
+// TestPresignedGet_LongLivedStillValid proves query-signed auth honors
+// X-Amz-Expires rather than the tighter 15-minute skew window alone.
+func TestPresignedGet_LongLivedStillValid(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "presigned-valid-" + randHex(8)
+	body := []byte("presigned valid " + key)
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/primary/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = presignedRequest(t, http.MethodGet, "/primary/"+key, nil, time.Now().UTC().Add(-20*time.Minute), time.Hour)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("returned body %q does not match written %q", string(respBody), string(body))
+	}
+}
+
+// TestPresignedGet_Expired proves query-signed auth rejects expired presigned
+// URLs with AccessDenied instead of forwarding them upstream.
+func TestPresignedGet_Expired(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	resp, respBody := presignedRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, time.Now().UTC().Add(-2*time.Minute), time.Minute)
+	assertStatus(t, resp, respBody, 403)
+	assertBodyContains(t, respBody, "AccessDenied")
+}
+
+// TestContinueWriteComposition proves on_match=continue for write-only routes:
+// a single PutObject against /compose/* is applied to both route matches, one
+// targeting MinIO and one targeting SeaweedFS.
+func TestContinueWriteComposition(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "compose-" + randHex(8)
+	body := []byte("composed write " + key)
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/compose/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("primary returned %q, want %q", string(respBody), string(body))
+	}
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/replica/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("replica returned %q, want %q", string(respBody), string(body))
+	}
+}
+
+// TestContinueDeleteComposition proves the same multi-route composition path
+// for deletes: a single DeleteObject against /compose/* removes the key from
+// both backends.
+func TestContinueDeleteComposition(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "compose-del-" + randHex(8)
+	body := []byte("composed delete " + key)
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/compose/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedRequest(t, http.MethodDelete, "/compose/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 204)
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 404)
+	resp, respBody = signedRequest(t, http.MethodGet, "/replica/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 404)
+}
+
 // TestListObjectsV2 forwards to MinIO and expects a ListBucketResult XML
 // response. We first PutObject a known key and then list it.
 func TestListObjectsV2(t *testing.T) {
@@ -170,6 +258,8 @@ func TestListBuckets(t *testing.T) {
 	assertBodyContains(t, respBody, "primary-bucket")
 	assertBodyContains(t, respBody, "replica-bucket")
 	assertBodyContains(t, respBody, "replicate-bucket")
+	assertBodyContains(t, respBody, "failover-bucket")
+	assertBodyContains(t, respBody, "compose-bucket")
 }
 
 // TestAuthFailure sends an unsigned request to a routing prefix. The proxy

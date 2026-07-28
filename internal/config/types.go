@@ -1,6 +1,9 @@
 package config
 
 import (
+	"net/url"
+	"regexp"
+	"text/template"
 	"time"
 )
 
@@ -14,10 +17,11 @@ type Runtime struct {
 }
 
 type Listener struct {
-	Name       string
-	Address    string
-	Addressing Addressing
-	Timeouts   Timeouts
+	Name           string
+	Address        string
+	Addressing     Addressing
+	MaxHeaderBytes int
+	Timeouts       Timeouts
 }
 
 type Addressing struct {
@@ -27,6 +31,7 @@ type Addressing struct {
 }
 
 type Timeouts struct {
+	Read       time.Duration
 	ReadHeader time.Duration
 	Idle       time.Duration
 	Write      time.Duration
@@ -95,8 +100,10 @@ type StaticCredential struct {
 type S3Target struct {
 	Name           string
 	Endpoint       string
+	EndpointURL    *url.URL
 	Region         string
 	ForcePathStyle bool
+	Timeout        time.Duration
 	Credentials    StaticCredential
 }
 
@@ -107,6 +114,7 @@ type Parser struct {
 	Bucket  string
 	Pattern string
 	Suffix  string
+	Regex   *regexp.Regexp
 }
 
 type Route struct {
@@ -126,6 +134,7 @@ type RewriteRule struct {
 	PrependKeyPrefix string
 	Bucket           string
 	KeyTemplate      string
+	CompiledTemplate *template.Template
 }
 
 type VirtualBucket struct {

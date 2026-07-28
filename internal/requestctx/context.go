@@ -28,9 +28,10 @@ type Context struct {
 }
 
 func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
+	escapedPath := requestEscapedPath(r)
 	ctx := &Context{
 		Host:    normalizeHost(r.Host),
-		RawPath: r.URL.Path,
+		RawPath: escapedPath,
 		Query:   r.URL.Query(),
 		Method:  r.Method,
 		Headers: r.Header,
@@ -43,7 +44,7 @@ func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
 				if bucket != "" {
 					ctx.AddressingMode = AddressingVirtualHosted
 					ctx.Bucket = bucket
-					ctx.Key = strings.TrimPrefix(r.URL.Path, "/")
+					ctx.Key = strings.TrimPrefix(escapedPath, "/")
 				}
 				break
 			}
@@ -52,14 +53,14 @@ func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
 
 	if ctx.AddressingMode == "" && cfg.PathStyle {
 		ctx.AddressingMode = AddressingPathStyle
-		bucket, key := parsePathStyle(r.URL.Path)
+		bucket, key := parsePathStyle(escapedPath)
 		ctx.Bucket = bucket
 		ctx.Key = key
 	}
 
 	if ctx.AddressingMode == "" {
 		ctx.AddressingMode = AddressingPathStyle
-		bucket, key := parsePathStyle(r.URL.Path)
+		bucket, key := parsePathStyle(escapedPath)
 		ctx.Bucket = bucket
 		ctx.Key = key
 	}
@@ -88,4 +89,17 @@ func normalizeHost(hostport string) string {
 		return hostport
 	}
 	return hostport[:idx]
+}
+
+func requestEscapedPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return "/"
+	}
+	if raw := r.URL.EscapedPath(); raw != "" {
+		return raw
+	}
+	if r.URL.Path != "" {
+		return r.URL.Path
+	}
+	return "/"
 }

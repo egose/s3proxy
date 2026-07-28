@@ -91,3 +91,22 @@ func TestFromRequest_BucketOnlyNoKey(t *testing.T) {
 		t.Errorf("expected empty key, got %q", ctx.Key)
 	}
 }
+
+func TestFromRequest_PreservesEscapedPathKey(t *testing.T) {
+	cfg := config.Addressing{PathStyle: true}
+	r := &http.Request{
+		Host:   "localhost:8080",
+		URL:    &url.URL{Path: "/mybucket/path/with/slash.txt", RawPath: "/mybucket/path%2Fwith%2Fslash.txt"},
+		Method: "GET",
+	}
+	ctx, err := FromRequest(r, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ctx.RawPath, "/mybucket/path%2Fwith%2Fslash.txt"; got != want {
+		t.Fatalf("RawPath = %q, want %q", got, want)
+	}
+	if got, want := ctx.Key, "path%2Fwith%2Fslash.txt"; got != want {
+		t.Fatalf("Key = %q, want %q", got, want)
+	}
+}

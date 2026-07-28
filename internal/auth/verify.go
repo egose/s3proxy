@@ -1,10 +1,10 @@
 package auth
 
 import (
-	"bytes"
 	"context"
-	"io"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,12 +57,10 @@ func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
 	}
 
 	region := regionFromScope(scope, v.defaultRegion)
-	bodyBytes, err := readAndRestoreBody(r)
+	clone, err := cloneForSigning(r)
 	if err != nil {
 		return nil, err
 	}
-
-	clone := cloneForSigning(r, bodyBytes)
 	clone.Header.Del("Authorization")
 	providedAuth := r.Header.Get("Authorization")
 
@@ -119,7 +117,7 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 	}
 
 	date := r.URL.Query().Get("X-Amz-Date")
-	if err := checkDateSkew(date); err != nil {
+	if err := checkPresignWindow(r, date); err != nil {
 		return nil, err
 	}
 
@@ -204,6 +202,32 @@ func checkDateSkew(amzDate string) error {
 	return nil
 }
 
+func checkPresignWindow(r *http.Request, amzDate string) error {
+	expiresRaw := r.URL.Query().Get("X-Amz-Expires")
+	if expiresRaw == "" {
+		return errMissingExpires
+	}
+	expiresSeconds, err := strconv.ParseInt(expiresRaw, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)
+	}
+	if expiresSeconds < 0 {
+		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)
+	}
+	signedAt, err := parseAmzDateE(amzDate)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if signedAt.Sub(now) > inboundSkew {
+		return errRequestExpired
+	}
+	if now.After(signedAt.Add(time.Duration(expiresSeconds) * time.Second)) {
+		return errPresignExpired
+	}
+	return nil
+}
+
 func parseAmzDate(s string) time.Time {
 	t, _ := parseAmzDateE(s)
 	return t
@@ -241,24 +265,18 @@ func stripUnsignedHeaders(clone *http.Request, signedHeaders []string) {
 	}
 }
 
-func readAndRestoreBody(r *http.Request) ([]byte, error) {
-	if r.Body == nil || r.Body == http.NoBody {
-		return nil, nil
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	return body, nil
-}
-
-func cloneForSigning(r *http.Request, bodyBytes []byte) *http.Request {
+func cloneForSigning(r *http.Request) (*http.Request, error) {
 	clone := r.Clone(context.Background())
-	if bodyBytes != nil {
-		clone.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	if r.GetBody != nil {
+		body, err := r.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		clone.Body = body
+		return clone, nil
 	}
-	return clone
+	clone.Body = http.NoBody
+	return clone, nil
 }
 
 const unsignedPayloadSentinel = "UNSIGNED-PAYLOAD"
@@ -271,8 +289,11 @@ var (
 	errMissingAccessKey      = AuthError("access key not found in credentials")
 	errMissingSignedHeaders  = AuthError("SignedHeaders not found in Authorization")
 	errInvalidCredential     = AuthError("invalid credential format")
+	errMissingExpires        = AuthError("missing X-Amz-Expires")
+	errInvalidExpires        = AuthError("invalid X-Amz-Expires")
 	errUnsupportedAuthScheme = AuthError("unsupported authorization scheme")
 	errRequestExpired        = AuthError("request timestamp outside allowed skew")
+	errPresignExpired        = AuthError("presigned request has expired")
 )
 
 type AuthError string

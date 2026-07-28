@@ -48,6 +48,7 @@ services:
   seaweedfs:
     <<: *common-props
     container_name: s3proxy_seaweedfs
+    hostname: seaweedfs
     image: chrislusf/seaweedfs:4.39
     # `-s3.config=/etc/seaweedfs/s3.json` enables SeaweedFS S3 identity-based
     # auth so signed requests with the test credentials get Write/List access.

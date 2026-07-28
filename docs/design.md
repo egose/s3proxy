@@ -257,7 +257,7 @@ Each S3 target includes:
 - credentials
 - path-style option
 - transport settings
-- timeout settings
+- optional request timeout
 
 ## Forwarding Behavior
 
@@ -443,6 +443,7 @@ target "s3" "primary" {
   endpoint         = "https://minio-a.internal"
   region           = "us-east-1"
   force_path_style = true
+  timeout          = "5s"
   credentials      = "primary"
 }
 
@@ -450,6 +451,7 @@ target "s3" "replica" {
   endpoint         = "https://minio-b.internal"
   region           = "us-east-1"
   force_path_style = true
+  timeout          = "5s"
   credentials      = "replica"
 }
 

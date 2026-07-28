@@ -1,6 +1,7 @@
 package router
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/egose/s3proxy/internal/config"
@@ -27,7 +28,7 @@ func buildTestRuntime() *config.Runtime {
 		},
 		Parsers: map[string]config.Parser{
 			"images":      {Name: "images", Kind: config.ParserPathPrefix, Prefix: "/images"},
-			"tenant_logs": {Name: "tenant_logs", Kind: config.ParserBucketRegex, Pattern: "^tenant-(?P<tenant>[a-z0-9-]+)-logs$"},
+			"tenant_logs": {Name: "tenant_logs", Kind: config.ParserBucketRegex, Pattern: "^tenant-(?P<tenant>[a-z0-9-]+)-logs$", Regex: regexp.MustCompile("^tenant-(?P<tenant>[a-z0-9-]+)-logs$")},
 		},
 		Routes: []config.Route{
 			{
@@ -146,5 +147,53 @@ func TestHashIndex(t *testing.T) {
 	}
 	if idx1 < 0 || idx1 >= 3 {
 		t.Errorf("hash index out of range: %d", idx1)
+	}
+}
+
+func TestResolve_ContinueReturnsMultipleMatches(t *testing.T) {
+	rt := &config.Runtime{
+		Targets: map[string]config.S3Target{
+			"primary": {Name: "primary", Endpoint: "https://a.internal", Region: "us-east-1"},
+			"replica": {Name: "replica", Endpoint: "https://b.internal", Region: "us-east-1"},
+		},
+		Parsers: map[string]config.Parser{
+			"images": {Name: "images", Kind: config.ParserPathPrefix, Prefix: "/images"},
+		},
+		Routes: []config.Route{
+			{
+				Name:            "first",
+				ParserRef:       "images",
+				Operations:      []string{"PutObject"},
+				DestinationRefs: []string{"primary"},
+				Dispatch:        config.DispatchFirst,
+				OnMatch:         config.MatchContinue,
+				ReadPreference:  config.ReadFirst,
+			},
+			{
+				Name:            "second",
+				ParserRef:       "images",
+				Operations:      []string{"PutObject"},
+				DestinationRefs: []string{"replica"},
+				Dispatch:        config.DispatchFirst,
+				OnMatch:         config.MatchStop,
+				ReadPreference:  config.ReadFirst,
+			},
+		},
+	}
+	r := NewResolver(rt)
+	ctx := &requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}
+
+	matches, err := r.Resolve(ctx, s3ops.OpPutObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(matches), 2; got != want {
+		t.Fatalf("len(matches) = %d, want %d", got, want)
+	}
+	if got, want := matches[0].Route.Name, "first"; got != want {
+		t.Fatalf("first route = %q, want %q", got, want)
+	}
+	if got, want := matches[1].Route.Name, "second"; got != want {
+		t.Fatalf("second route = %q, want %q", got, want)
 	}
 }

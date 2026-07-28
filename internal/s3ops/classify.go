@@ -44,6 +44,9 @@ func Classify(ctx *requestctx.Context) (Operation, error) {
 	case http.MethodHead:
 		return OpHeadObject, nil
 	case http.MethodPut:
+		if ctx.Key == "" {
+			return OpUnknown, nil
+		}
 		if ctx.Headers.Get("x-amz-copy-source") != "" {
 			return OpCopyObject, nil
 		}
@@ -52,6 +55,9 @@ func Classify(ctx *requestctx.Context) (Operation, error) {
 		}
 		return OpPutObject, nil
 	case http.MethodDelete:
+		if ctx.Key == "" {
+			return OpUnknown, nil
+		}
 		return OpDeleteObject, nil
 	}
 

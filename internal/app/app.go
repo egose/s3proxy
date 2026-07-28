@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -16,6 +17,17 @@ import (
 	"github.com/egose/s3proxy/internal/listbuckets"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
+)
+
+const (
+	defaultUpstreamDialTimeout           = 10 * time.Second
+	defaultUpstreamKeepAlive             = 30 * time.Second
+	defaultUpstreamTLSHandshakeTimeout   = 10 * time.Second
+	defaultUpstreamResponseHeaderTimeout = 30 * time.Second
+	defaultUpstreamExpectContinueTimeout = 1 * time.Second
+	defaultUpstreamIdleConnTimeout       = 90 * time.Second
+	defaultReadTimeout                   = 30 * time.Second
+	defaultMaxHeaderBytes                = 1 << 20
 )
 
 type BuildOptions struct {
@@ -48,7 +60,19 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	rewriter := rewrite.New()
 
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   defaultUpstreamDialTimeout,
+				KeepAlive: defaultUpstreamKeepAlive,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       defaultUpstreamIdleConnTimeout,
+			TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
+			ExpectContinueTimeout: defaultUpstreamExpectContinueTimeout,
+			ResponseHeaderTimeout: defaultUpstreamResponseHeaderTimeout,
+		},
 	}
 	backend := s3.NewClient(httpClient)
 	dispatcher := dispatch.New(backend)
@@ -67,9 +91,14 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	})
 
 	server := &http.Server{
-		Addr:      rt.Listener.Address,
-		Handler:   handler,
-		TLSConfig: nil,
+		Addr:           rt.Listener.Address,
+		Handler:        handler,
+		TLSConfig:      nil,
+		ReadTimeout:    defaultReadTimeout,
+		MaxHeaderBytes: defaultMaxHeaderBytes,
+	}
+	if rt.Listener.Timeouts.Read > 0 {
+		server.ReadTimeout = rt.Listener.Timeouts.Read
 	}
 	if rt.Listener.Timeouts.ReadHeader > 0 {
 		server.ReadHeaderTimeout = rt.Listener.Timeouts.ReadHeader
@@ -79,6 +108,9 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	}
 	if rt.Listener.Timeouts.Write > 0 {
 		server.WriteTimeout = rt.Listener.Timeouts.Write
+	}
+	if rt.Listener.MaxHeaderBytes > 0 {
+		server.MaxHeaderBytes = rt.Listener.MaxHeaderBytes
 	}
 
 	return &App{Config: rt, Server: server}, nil

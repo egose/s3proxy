@@ -2,6 +2,7 @@ package rewrite
 
 import (
 	"testing"
+	"text/template"
 
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/requestctx"
@@ -76,8 +77,9 @@ func TestApply_KeyTemplate(t *testing.T) {
 	}
 	route := config.Route{
 		Rewrite: config.RewriteRule{
-			Bucket:      "shared-logs",
-			KeyTemplate: "{{ .Captures.tenant }}/{{ .Key }}",
+			Bucket:           "shared-logs",
+			KeyTemplate:      "{{ .Captures.tenant }}/{{ .Key }}",
+			CompiledTemplate: template.Must(template.New("key").Option("missingkey=error").Parse("{{ .Captures.tenant }}/{{ .Key }}")),
 		},
 	}
 	captures := map[string]string{"tenant": "acme"}
@@ -90,6 +92,25 @@ func TestApply_KeyTemplate(t *testing.T) {
 	}
 	if result.Key != "acme/app.log" {
 		t.Errorf("expected key 'acme/app.log', got %q", result.Key)
+	}
+}
+
+func TestApply_KeyTemplateMissingCaptureFails(t *testing.T) {
+	e := New()
+	ctx := &requestctx.Context{
+		Bucket: "tenant-acme-logs",
+		Key:    "app.log",
+	}
+	route := config.Route{
+		Rewrite: config.RewriteRule{
+			Bucket:           "shared-logs",
+			KeyTemplate:      "{{ .Captures.tenant }}/{{ .Key }}",
+			CompiledTemplate: template.Must(template.New("key").Option("missingkey=error").Parse("{{ .Captures.tenant }}/{{ .Key }}")),
+		},
+	}
+	_, err := e.Apply(ctx, route, map[string]string{})
+	if err == nil {
+		t.Fatal("expected key_template execution error")
 	}
 }
 

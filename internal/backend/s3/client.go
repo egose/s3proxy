@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
@@ -41,42 +42,40 @@ type client struct {
 }
 
 func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
+	if req.Target.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.Target.Timeout)
+		defer cancel()
+	}
+
 	targetURL, err := buildTargetURL(req.Target, req.Bucket, req.Key, req.Source)
 	if err != nil {
 		return nil, fmt.Errorf("build target URL: %w", err)
 	}
 
-	// Buffer the body so we can set Content-Length explicitly. Without an
-	// explicit Content-Length, net/http sends `Content-Length: 0` and a
-	// chunked body when the source Body is an io.NopCloser wrapping a
-	// bytes.Reader — and MinIO rejects that with 411 MissingContentLength.
-	// Buffering also lets the per-destination body be replayed for fan-out.
-	var bodyReader io.Reader
-	if req.Source.Body != nil && req.Source.Body != http.NoBody {
-		bodyBytes, err := io.ReadAll(req.Source.Body)
-		if err != nil {
-			return nil, fmt.Errorf("read request body: %w", err)
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
+	body, getBody, contentLength, err := prepareSourceBody(req.Source)
+	if err != nil {
+		return nil, err
 	}
 
-	outReq, err := http.NewRequestWithContext(ctx, req.Source.Method, targetURL.String(), bodyReader)
+	outReq, err := http.NewRequestWithContext(ctx, req.Source.Method, targetURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create outbound request: %w", err)
 	}
-	if br, ok := bodyReader.(*bytes.Reader); ok {
-		outReq.Body = io.NopCloser(br)
-		outReq.ContentLength = int64(br.Len())
+	if body != nil {
+		outReq.Body = body
+		outReq.GetBody = getBody
+		outReq.ContentLength = contentLength
 		// Explicitly set the Content-Length header so the AWS SigV4 signer
 		// includes it in SignedHeaders. Without this, net/http adds the
 		// header at send time (after signing), causing MinIO/S3 backends to
 		// reject the request with SignatureDoesNotMatch.
-		outReq.Header.Set("Content-Length", strconv.Itoa(br.Len()))
+		outReq.Header.Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	}
 	outReq.Host = targetURL.Host
 
 	for key, vals := range req.Source.Header {
-		if !shouldForwardHeader(key) {
+		if !shouldForwardHeader(key, req.Source.Header) {
 			continue
 		}
 		for _, v := range vals {
@@ -101,17 +100,48 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	}, nil
 }
 
-func buildTargetURL(target config.S3Target, bucket, key string, src *http.Request) (*url.URL, error) {
-	base, err := url.Parse(target.Endpoint)
-	if err != nil {
-		return nil, err
+func prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io.ReadCloser, error), int64, error) {
+	if src == nil || src.Body == nil || src.Body == http.NoBody {
+		return nil, nil, 0, nil
 	}
+	if src.GetBody == nil && src.ContentLength >= 0 {
+		return src.Body, nil, src.ContentLength, nil
+	}
+	if src.GetBody == nil {
+		bodyBytes, err := io.ReadAll(src.Body)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("read request body: %w", err)
+		}
+		installSourceReplayBody(src, bodyBytes)
+	}
+	body, err := src.GetBody()
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("get request body: %w", err)
+	}
+	return body, src.GetBody, src.ContentLength, nil
+}
+
+func installSourceReplayBody(src *http.Request, body []byte) {
+	src.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	src.Body = io.NopCloser(bytes.NewReader(body))
+	src.ContentLength = int64(len(body))
+}
+
+func buildTargetURL(target config.S3Target, bucket, key string, src *http.Request) (*url.URL, error) {
+	if target.EndpointURL == nil {
+		return nil, fmt.Errorf("target endpoint is not parsed")
+	}
+	base := cloneURL(target.EndpointURL)
+	var err error
 
 	var path string
+	var rawPath string
 	if target.ForcePathStyle {
-		path = "/" + bucket
-		if key != "" {
-			path += "/" + key
+		path, rawPath, err = buildObjectPath("/"+bucket, key)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		if base.Host != "" {
@@ -121,14 +151,20 @@ func buildTargetURL(target config.S3Target, bucket, key string, src *http.Reques
 				base.Host += "." + strings.Join(hostParts[1:], ".")
 			}
 		}
-		path = "/" + key
+		path, rawPath, err = buildObjectPath("", key)
+		if err != nil {
+			return nil, err
+		}
 	}
+	joinedPath := joinURLPath(base.Path, path)
+	joinedRawPath := joinURLPath(base.EscapedPath(), rawPath)
 
 	targetURL := &url.URL{
 		Scheme:   base.Scheme,
 		Host:     base.Host,
-		Path:     path,
-		RawQuery: src.URL.RawQuery,
+		Path:     joinedPath,
+		RawPath:  joinedRawPath,
+		RawQuery: filteredQuery(src.URL.Query()).Encode(),
 	}
 
 	if target.ForcePathStyle {
@@ -138,7 +174,82 @@ func buildTargetURL(target config.S3Target, bucket, key string, src *http.Reques
 	return targetURL, nil
 }
 
-func shouldForwardHeader(name string) bool {
+func cloneURL(src *url.URL) *url.URL {
+	if src == nil {
+		return nil
+	}
+	copy := *src
+	return &copy
+}
+
+func buildObjectPath(prefix, key string) (string, string, error) {
+	rawKey := canonicalizeEscapedPath(key)
+	decodedKey, err := url.PathUnescape(rawKey)
+	if err != nil {
+		return "", "", fmt.Errorf("unescape key path: %w", err)
+	}
+	if prefix == "" {
+		if key == "" {
+			return "/", "/", nil
+		}
+		return "/" + decodedKey, "/" + rawKey, nil
+	}
+	decodedPrefix := prefix
+	rawPrefix := prefix
+	if key == "" {
+		return decodedPrefix, rawPrefix, nil
+	}
+	return path.Join(decodedPrefix, decodedKey), joinURLPath(rawPrefix, rawKey), nil
+}
+
+func canonicalizeEscapedPath(value string) string {
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '%' && i+2 < len(value) && isHex(value[i+1]) && isHex(value[i+2]) {
+			b.WriteByte('%')
+			b.WriteByte(value[i+1])
+			b.WriteByte(value[i+2])
+			i += 2
+			continue
+		}
+		if isSafePathByte(c) {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteString(fmt.Sprintf("%%%02X", c))
+	}
+	return b.String()
+}
+
+func isSafePathByte(c byte) bool {
+	if c == '/' || c == '-' || c == '_' || c == '.' || c == '~' {
+		return true
+	}
+	if c >= 'a' && c <= 'z' {
+		return true
+	}
+	if c >= 'A' && c <= 'Z' {
+		return true
+	}
+	if c >= '0' && c <= '9' {
+		return true
+	}
+	return false
+}
+
+func isHex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func shouldForwardHeader(name string, headers http.Header) bool {
+	if isHopByHopHeader(name, headers) {
+		return false
+	}
 	switch strings.ToLower(name) {
 	case "authorization", "x-amz-security-token", "x-amz-decoded-content-length",
 		"x-amz-content-sha256", "content-length":
@@ -147,5 +258,68 @@ func shouldForwardHeader(name string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func isHopByHopHeader(name string, headers http.Header) bool {
+	canonical := strings.ToLower(name)
+	switch canonical {
+	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+		"te", "trailer", "transfer-encoding", "upgrade":
+		return true
+	}
+	_, ok := connectionHeaderTokens(headers)[canonical]
+	return ok
+}
+
+func connectionHeaderTokens(headers http.Header) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, raw := range headers.Values("Connection") {
+		for _, token := range strings.Split(raw, ",") {
+			token = strings.ToLower(strings.TrimSpace(token))
+			if token != "" {
+				tokens[token] = struct{}{}
+			}
+		}
+	}
+	return tokens
+}
+
+func joinURLPath(prefix, suffix string) string {
+	if prefix == "" || prefix == "/" {
+		if suffix == "" {
+			return "/"
+		}
+		return suffix
+	}
+	if suffix == "" || suffix == "/" {
+		return strings.TrimRight(prefix, "/")
+	}
+	return strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(suffix, "/")
+}
+
+func filteredQuery(values url.Values) url.Values {
+	if len(values) == 0 {
+		return url.Values{}
+	}
+	out := make(url.Values, len(values))
+	for key, vals := range values {
+		if isInboundAuthQueryParam(key) {
+			continue
+		}
+		copied := make([]string, len(vals))
+		copy(copied, vals)
+		out[key] = copied
+	}
+	return out
+}
+
+func isInboundAuthQueryParam(name string) bool {
+	switch strings.ToLower(name) {
+	case "x-amz-algorithm", "x-amz-credential", "x-amz-date", "x-amz-expires",
+		"x-amz-security-token", "x-amz-signature", "x-amz-signedheaders":
+		return true
+	default:
+		return false
 	}
 }
