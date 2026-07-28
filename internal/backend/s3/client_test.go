@@ -70,6 +70,28 @@ func TestBuildTargetURL_PreservesEscapedKey(t *testing.T) {
 	}
 }
 
+func TestBuildTargetURL_PreservesOpaquePathStyleKey(t *testing.T) {
+	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/source/object", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetURL, err := buildTargetURL(config.S3Target{
+		Endpoint:       "https://minio.internal",
+		EndpointURL:    mustURL(t, "https://minio.internal"),
+		ForcePathStyle: true,
+	}, "bucket", "foo//bar/../baz/./qux", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := targetURL.RawPath, "/bucket/foo//bar/../baz/./qux"; got != want {
+		t.Fatalf("RawPath = %q, want %q", got, want)
+	}
+	if got, want := targetURL.Path, "/bucket/foo//bar/../baz/./qux"; got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+}
+
 func TestBuildTargetURL_StripsInboundAuthQueryParams(t *testing.T) {
 	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/source/object?list-type=2&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=test&X-Amz-Signature=deadbeef", nil)
 	if err != nil {
@@ -263,6 +285,64 @@ func TestClientDo_ReusesReplayableSourceBody(t *testing.T) {
 		if body != "payload" {
 			t.Fatalf("body[%d] = %q, want payload", i, body)
 		}
+	}
+}
+
+func TestClientDo_UsesGetBodyOncePerRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if got, want := string(body), "payload"; got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getBodyCalls := 0
+	src.GetBody = func() (io.ReadCloser, error) {
+		getBodyCalls++
+		if getBodyCalls > 1 {
+			return nil, errors.New("GetBody called too many times")
+		}
+		return io.NopCloser(strings.NewReader("payload")), nil
+	}
+	src.Body, err = src.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	getBodyCalls = 0
+	src.ContentLength = int64(len("payload"))
+
+	client := NewClient(&http.Client{})
+	resp, err := client.Do(context.Background(), Request{
+		Operation: s3ops.OpPutObject,
+		Target: config.S3Target{
+			Endpoint:       server.URL,
+			EndpointURL:    mustURL(t, server.URL),
+			Region:         "us-east-1",
+			ForcePathStyle: true,
+			Credentials: config.StaticCredential{
+				AccessKey: "ak",
+				SecretKey: "sk",
+			},
+		},
+		Bucket: "bucket",
+		Key:    "key",
+		Source: src,
+	})
+	if err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	resp.Body.Close()
+	if got, want := getBodyCalls, 1; got != want {
+		t.Fatalf("GetBody calls = %d, want %d", got, want)
 	}
 }
 

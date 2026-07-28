@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"strconv"
 	"strings"
 
@@ -199,7 +198,23 @@ func buildObjectPath(prefix, key string) (string, string, error) {
 	if key == "" {
 		return decodedPrefix, rawPrefix, nil
 	}
-	return path.Join(decodedPrefix, decodedKey), joinURLPath(rawPrefix, rawKey), nil
+	return joinObjectPath(decodedPrefix, decodedKey), joinObjectPath(rawPrefix, rawKey), nil
+}
+
+func joinObjectPath(prefix, key string) string {
+	if prefix == "" {
+		if key == "" {
+			return "/"
+		}
+		return "/" + key
+	}
+	if key == "" {
+		return prefix
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return prefix + key
+	}
+	return prefix + "/" + key
 }
 
 func canonicalizeEscapedPath(value string) string {

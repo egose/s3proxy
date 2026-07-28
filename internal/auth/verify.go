@@ -122,19 +122,24 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 	}
 
 	region := regionFromScope(scope, v.defaultRegion)
+	signedHeaders, err := parseSignedHeaders(r.URL.Query().Get("X-Amz-SignedHeaders"))
+	if err != nil {
+		return nil, err
+	}
 
 	clone := r.Clone(context.Background())
 	provided := r.URL.Query().Get("X-Amz-Signature")
 	if provided == "" {
 		return nil, errMissingSignature
 	}
+	stripUnsignedHeaders(clone, signedHeaders)
 
 	creds := aws.Credentials{
 		AccessKeyID:     client.AccessKey,
 		SecretAccessKey: client.SecretKey,
 	}
 
-	_, _, err := v.signer.PresignHTTP(context.Background(), creds, clone, unsignedPayloadSentinel, inboundService, region, parseAmzDate(date))
+	_, _, err = v.signer.PresignHTTP(context.Background(), creds, clone, unsignedPayloadSentinel, inboundService, region, parseAmzDate(date))
 	if err != nil {
 		return nil, err
 	}
@@ -171,21 +176,33 @@ func parseAuthHeader(header string) (accessKey, scope string, signedHeaders []st
 			scope = strings.Join(elements[1:], "/")
 		case strings.HasPrefix(field, "SignedHeaders="):
 			raw := strings.TrimPrefix(field, "SignedHeaders=")
-			for _, h := range strings.Split(raw, ";") {
-				h = strings.TrimSpace(h)
-				if h != "" {
-					signedHeaders = append(signedHeaders, strings.ToLower(h))
-				}
+			signedHeaders, err = parseSignedHeaders(raw)
+			if err != nil {
+				return "", "", nil, err
 			}
 		}
 	}
 	if accessKey == "" {
 		return "", "", nil, errMissingAccessKey
 	}
-	if len(signedHeaders) == 0 {
-		return "", "", nil, errMissingSignedHeaders
-	}
 	return accessKey, scope, signedHeaders, nil
+}
+
+func parseSignedHeaders(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, errMissingSignedHeaders
+	}
+	var signedHeaders []string
+	for _, h := range strings.Split(raw, ";") {
+		h = strings.TrimSpace(h)
+		if h != "" {
+			signedHeaders = append(signedHeaders, strings.ToLower(h))
+		}
+	}
+	if len(signedHeaders) == 0 {
+		return nil, errMissingSignedHeaders
+	}
+	return signedHeaders, nil
 }
 
 func checkDateSkew(amzDate string) error {

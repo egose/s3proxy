@@ -206,6 +206,32 @@ func TestSigV4Static_PresignedQueryValid(t *testing.T) {
 	}
 }
 
+func TestSigV4Static_PresignedQueryIgnoresUnsignedHeaders(t *testing.T) {
+	const ak = "AKIATEST"
+	const sk = "testsecret123"
+	cfg := config.Auth{
+		Mode: config.AuthModeSigV4Static,
+		Clients: map[string]config.Client{
+			"ci": {Name: "ci", AccessKey: ak, SecretKey: sk},
+		},
+	}
+	authenticator, err := NewAuthenticator(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := mustPresignedRequest(t, ak, sk, time.Now().UTC(), 10*time.Minute)
+	req.Header.Set("Range", "bytes=0-1")
+
+	p, err := authenticator.Authenticate(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p == nil || p.Name != "ci" {
+		t.Fatalf("unexpected principal: %#v", p)
+	}
+}
+
 func TestSigV4Static_PresignedQueryLongLivedValid(t *testing.T) {
 	const ak = "AKIATEST"
 	const sk = "testsecret123"
