@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 )
 
 func Validate(rt *Runtime) error {
@@ -81,6 +82,16 @@ func validateTargets(targets map[string]S3Target) error {
 		}
 		if t.EndpointURL == nil {
 			return fmt.Errorf("target.s3 %q: parsed endpoint is missing", name)
+		}
+		if !t.EndpointURL.IsAbs() {
+			return fmt.Errorf("target.s3 %q: endpoint must be an absolute URL", name)
+		}
+		if t.EndpointURL.Host == "" {
+			return fmt.Errorf("target.s3 %q: endpoint host is required", name)
+		}
+		scheme := strings.ToLower(t.EndpointURL.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("target.s3 %q: endpoint scheme must be http or https", name)
 		}
 		if t.Region == "" {
 			return fmt.Errorf("target.s3 %q: region is required", name)

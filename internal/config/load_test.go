@@ -556,3 +556,71 @@ route "r" {
 		t.Fatal("expected error for CopyObject")
 	}
 }
+
+func TestLoadFile_RejectsRelativeTargetEndpoint(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "minio.internal"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for relative endpoint")
+	}
+}
+
+func TestLoadFile_RejectsUnsupportedTargetEndpointScheme(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "ftp://minio.internal"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for unsupported endpoint scheme")
+	}
+}

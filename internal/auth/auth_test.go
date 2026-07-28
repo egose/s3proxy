@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,45 @@ func TestSigV4Static_ValidHeader(t *testing.T) {
 	}
 	if p.Name != "ci" {
 		t.Errorf("expected principal name 'ci', got %q", p.Name)
+	}
+}
+
+func TestSigV4Static_ValidHeaderWithReorderedFields(t *testing.T) {
+	const ak = "AKIATEST"
+	const sk = "testsecret123"
+	cfg := config.Auth{
+		Mode: config.AuthModeSigV4Static,
+		Clients: map[string]config.Client{
+			"ci": {Name: "ci", AccessKey: ak, SecretKey: sk},
+		},
+	}
+	authenticator, err := NewAuthenticator(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/bucket/key", nil)
+	r.Host = "s3proxy.example.com"
+	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+
+	signer := v4signer()
+	creds := aws.Credentials{AccessKeyID: ak, SecretAccessKey: sk}
+	if err := signer.SignHTTP(context.Background(), creds, r, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Now().UTC()); err != nil {
+		t.Fatalf("signing failed: %v", err)
+	}
+
+	accessKey, scope, signedHeaders, signature, err := parseAuthHeader(r.Header.Get("Authorization"))
+	if err != nil {
+		t.Fatalf("parseAuthHeader failed: %v", err)
+	}
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Signature="+signature+", SignedHeaders="+strings.Join(signedHeaders, ";")+", Credential="+accessKey+"/"+scope)
+
+	p, err := authenticator.Authenticate(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p == nil || p.Name != "ci" {
+		t.Fatalf("unexpected principal: %#v", p)
 	}
 }
 
@@ -254,6 +294,28 @@ func TestSigV4Static_PresignedQueryLongLivedValid(t *testing.T) {
 	}
 	if p == nil || p.Name != "ci" {
 		t.Fatalf("unexpected principal: %#v", p)
+	}
+}
+
+func TestSigV4Static_PresignedQueryRejectsTooLongExpiry(t *testing.T) {
+	const ak = "AKIATEST"
+	const sk = "testsecret123"
+	cfg := config.Auth{
+		Mode: config.AuthModeSigV4Static,
+		Clients: map[string]config.Client{
+			"ci": {Name: "ci", AccessKey: ak, SecretKey: sk},
+		},
+	}
+	authenticator, err := NewAuthenticator(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := mustPresignedRequest(t, ak, sk, time.Now().UTC(), 8*24*time.Hour)
+
+	_, err = authenticator.Authenticate(req)
+	if err == nil {
+		t.Fatal("expected presigned request with too-long expiry to fail")
 	}
 }
 
