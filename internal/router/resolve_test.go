@@ -29,6 +29,7 @@ func buildTestRuntime() *config.Runtime {
 		Parsers: map[string]config.Parser{
 			"images":      {Name: "images", Kind: config.ParserPathPrefix, Prefix: "/images"},
 			"tenant_logs": {Name: "tenant_logs", Kind: config.ParserBucketRegex, Pattern: "^tenant-(?P<tenant>[a-z0-9-]+)-logs$", Regex: regexp.MustCompile("^tenant-(?P<tenant>[a-z0-9-]+)-logs$")},
+			"hosted":      {Name: "hosted", Kind: config.ParserHostSuffix, Suffix: "example.com"},
 		},
 		Routes: []config.Route{
 			{
@@ -45,6 +46,15 @@ func buildTestRuntime() *config.Runtime {
 				ParserRef:       "tenant_logs",
 				Operations:      []string{"GetObject", "ListObjectsV2"},
 				DestinationRefs: []string{"primary", "replica"},
+				Dispatch:        config.DispatchFirst,
+				OnMatch:         config.MatchStop,
+				ReadPreference:  config.ReadFirst,
+			},
+			{
+				Name:            "hosted_read",
+				ParserRef:       "hosted",
+				Operations:      []string{"GetObject"},
+				DestinationRefs: []string{"primary"},
 				Dispatch:        config.DispatchFirst,
 				OnMatch:         config.MatchStop,
 				ReadPreference:  config.ReadFirst,
@@ -195,5 +205,23 @@ func TestResolve_ContinueReturnsMultipleMatches(t *testing.T) {
 	}
 	if got, want := matches[1].Route.Name, "second"; got != want {
 		t.Fatalf("second route = %q, want %q", got, want)
+	}
+}
+
+func TestResolve_HostSuffixRequiresLabelBoundary(t *testing.T) {
+	rt := buildTestRuntime()
+	r := NewResolver(rt)
+
+	_, err := r.Resolve(&requestctx.Context{Host: "badexample.com"}, s3ops.OpGetObject)
+	if err == nil {
+		t.Fatal("expected no host_suffix match for badexample.com")
+	}
+
+	matches, err := r.Resolve(&requestctx.Context{Host: "files.example.com"}, s3ops.OpGetObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := matches[0].Route.Name, "hosted_read"; got != want {
+		t.Fatalf("route = %q, want %q", got, want)
 	}
 }

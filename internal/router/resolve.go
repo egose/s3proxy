@@ -127,13 +127,25 @@ func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]str
 		return true, captures, nil
 
 	case config.ParserHostSuffix:
-		if strings.HasSuffix(ctx.Host, p.Suffix) {
+		if hostMatchesSuffix(ctx.Host, p.Suffix) {
 			return true, captures, nil
 		}
 		return false, nil, nil
 	}
 
 	return false, nil, nil
+}
+
+func hostMatchesSuffix(host, suffix string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	suffix = strings.ToLower(strings.TrimSuffix(suffix, "."))
+	if host == "" || suffix == "" {
+		return false
+	}
+	if host == suffix {
+		return true
+	}
+	return strings.HasSuffix(host, "."+suffix)
 }
 
 func routeAllowsOperation(route config.Route, op s3ops.Operation) bool {
