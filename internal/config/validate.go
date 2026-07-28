@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 )
 
 func Validate(rt *Runtime) error {
@@ -29,6 +30,12 @@ func Validate(rt *Runtime) error {
 func validateListener(l Listener) error {
 	if l.Address == "" {
 		return fmt.Errorf("listener.http %q: address is required", l.Name)
+	}
+	if l.MaxHeaderBytes < 0 {
+		return fmt.Errorf("listener.http %q: max_header_bytes must be >= 0", l.Name)
+	}
+	if l.Timeouts.Read < 0 || l.Timeouts.ReadHeader < 0 || l.Timeouts.Idle < 0 || l.Timeouts.Write < 0 {
+		return fmt.Errorf("listener.http %q: timeouts must be >= 0", l.Name)
 	}
 	if !l.Addressing.PathStyle && !l.Addressing.VirtualHosted {
 		return fmt.Errorf("listener.http %q: at least one addressing mode must be enabled", l.Name)
@@ -73,6 +80,19 @@ func validateTargets(targets map[string]S3Target) error {
 		if t.Endpoint == "" {
 			return fmt.Errorf("target.s3 %q: endpoint is required", name)
 		}
+		if t.EndpointURL == nil {
+			return fmt.Errorf("target.s3 %q: parsed endpoint is missing", name)
+		}
+		if !t.EndpointURL.IsAbs() {
+			return fmt.Errorf("target.s3 %q: endpoint must be an absolute URL", name)
+		}
+		if t.EndpointURL.Host == "" {
+			return fmt.Errorf("target.s3 %q: endpoint host is required", name)
+		}
+		scheme := strings.ToLower(t.EndpointURL.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("target.s3 %q: endpoint scheme must be http or https", name)
+		}
 		if t.Region == "" {
 			return fmt.Errorf("target.s3 %q: region is required", name)
 		}
@@ -81,6 +101,9 @@ func validateTargets(targets map[string]S3Target) error {
 		}
 		if t.Credentials.SecretKey == "" {
 			return fmt.Errorf("target.s3 %q: credentials secret_key is empty", name)
+		}
+		if t.Timeout < 0 {
+			return fmt.Errorf("target.s3 %q: timeout must be >= 0", name)
 		}
 	}
 	return nil
@@ -140,7 +163,11 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 			return fmt.Errorf("route %q: invalid dispatch %q", r.Name, r.Dispatch)
 		}
 		switch r.OnMatch {
-		case MatchStop, MatchContinue:
+		case MatchStop:
+		case MatchContinue:
+			if !routeSupportsContinue(r) {
+				return fmt.Errorf("route %q: on_match %q is only implemented for write-only routes", r.Name, r.OnMatch)
+			}
 		default:
 			return fmt.Errorf("route %q: invalid on_match %q", r.Name, r.OnMatch)
 		}
@@ -155,6 +182,9 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 		for _, op := range r.Operations {
 			if !isValidOperation(op) {
 				return fmt.Errorf("route %q: unsupported operation %q", r.Name, op)
+			}
+			if op == "CopyObject" {
+				return fmt.Errorf("route %q: operation %q is not implemented", r.Name, op)
 			}
 		}
 		if r.Dispatch == DispatchAll && r.ReadPreference != ReadFirst {
@@ -193,4 +223,18 @@ func isValidOperation(op string) bool {
 	default:
 		return false
 	}
+}
+
+func routeSupportsContinue(r Route) bool {
+	if len(r.Operations) == 0 {
+		return false
+	}
+	for _, op := range r.Operations {
+		switch op {
+		case "PutObject", "DeleteObject":
+		default:
+			return false
+		}
+	}
+	return true
 }

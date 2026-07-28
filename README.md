@@ -18,7 +18,6 @@ forwards them to S3-compatible targets using the destinations' credentials.
 - `HeadBucket`
 - `ListObjectsV2`
 - `ListBuckets` (virtual/proxy-defined)
-- `CopyObject` (header-based detection)
 
 ### Auth Modes
 
@@ -139,6 +138,7 @@ target "s3" "primary" {
   endpoint         = "https://minio-a.internal"
   region           = "us-east-1"
   force_path_style = true
+  timeout          = "5s"
   credentials      = "primary"
 }
 
@@ -243,6 +243,8 @@ values into the config file.
 
 - `key_template` uses Go template syntax. Accessed data is keyed by `Bucket`,
   `Key`, and `Captures` (a `map[string]string` of regex named-group captures).
+- Escaped path bytes are preserved through routing and rewrites, so keys such
+  as `%2F` stay distinct from literal path separators.
 - For multi-destination routes, `read_preference` controls which destination
   is used for reads (`first` by default).
 - For multi-destination writes with `dispatch = "all"`, all destinations must
@@ -250,6 +252,9 @@ values into the config file.
 - `ordered_failover` only fails over on transport errors, timeouts, and
   upstream `5xx`. It does not fail over on `404` / `NoSuchKey` /
   `NoSuchBucket` responses.
+- `target "s3"` supports an optional `timeout` duration. For
+  `ordered_failover`, this directly bounds how long the proxy waits before
+  failing over from a slow or unreachable backend.
 - `ListBuckets` returns proxy-defined virtual buckets, not upstream discovery.
 - Request body fan-out for multi-destination writes reads the entire body into
   memory before replaying to each destination.

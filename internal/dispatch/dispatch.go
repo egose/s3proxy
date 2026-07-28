@@ -34,6 +34,10 @@ type dispatcher struct {
 func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http.Request, op s3ops.Operation, rw rewrite.Result) (*Result, error) {
 	result := &Result{Errors: make(map[string]error)}
 
+	if s3ops.IsRead(op) && match.Route.ReadPreference == config.ReadOrderedFailover {
+		return d.dispatchOrderedFailover(ctx, result, match, req, op, rw)
+	}
+
 	if s3ops.IsRead(op) || match.Route.Dispatch == config.DispatchFirst || !s3ops.SupportsFanout(op) {
 		var target config.S3Target
 		if match.EffectiveRead != nil {
@@ -58,13 +62,14 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 		return result, nil
 	}
 
-	var bodyBytes []byte
-	if req.Body != nil {
-		bodyBytes, _ = io.ReadAll(req.Body)
+	if err := ensureReplayableBody(req); err != nil {
+		return nil, err
 	}
 
-	for _, dest := range match.Destinations {
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	for i, dest := range match.Destinations {
+		if err := resetRequestBody(req); err != nil {
+			return nil, err
+		}
 
 		resp, err := d.backend.Do(ctx, s3.Request{
 			Operation: op,
@@ -82,20 +87,92 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
 		}
 
-		if result.Primary == nil {
-			// The first response becomes the primary and is streamed back
-			// to the client by the httpapi; do NOT close its body here.
+		if i == 0 {
 			result.Primary = resp
 		} else {
-			// Non-primary responses are not surfaced to the client; close
-			// their bodies immediately to release the upstream connection.
-			resp.Body.Close()
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
 		}
 	}
 
 	if len(result.Errors) > 0 {
+		if result.Primary != nil && result.Primary.StatusCode < 400 {
+			if result.Primary.Body != nil {
+				result.Primary.Body.Close()
+			}
+			result.Primary = nil
+		}
 		return result, fmt.Errorf("fan-out had %d failures", len(result.Errors))
 	}
 
 	return result, nil
+}
+
+func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result, match router.Match, req *http.Request, op s3ops.Operation, rw rewrite.Result) (*Result, error) {
+	if len(match.Destinations) == 0 {
+		return nil, fmt.Errorf("no destination available")
+	}
+
+	for _, dest := range match.Destinations {
+		resp, err := d.backend.Do(ctx, s3.Request{
+			Operation: op,
+			Target:    dest,
+			Bucket:    rw.Bucket,
+			Key:       rw.Key,
+			Source:    req,
+		})
+		if err != nil {
+			result.Errors[dest.Name] = err
+			continue
+		}
+
+		if resp.StatusCode >= http.StatusInternalServerError {
+			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			if result.Primary != nil && result.Primary.Body != nil {
+				result.Primary.Body.Close()
+			}
+			result.Primary = resp
+			continue
+		}
+
+		result.Primary = resp
+		return result, nil
+	}
+
+	if result.Primary != nil {
+		return result, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
+	}
+	return nil, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
+}
+
+func ensureReplayableBody(req *http.Request) error {
+	if req.Body == nil || req.Body == http.NoBody || req.GetBody != nil {
+		return nil
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return fmt.Errorf("read request body: %w", err)
+	}
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	return nil
+}
+
+func resetRequestBody(req *http.Request) error {
+	if req.GetBody == nil {
+		if req.Body == nil {
+			req.Body = http.NoBody
+		}
+		return nil
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return fmt.Errorf("get request body: %w", err)
+	}
+	req.Body = body
+	return nil
 }

@@ -93,6 +93,19 @@ func TestClassify_PutObject(t *testing.T) {
 	}
 }
 
+func TestClassify_PutBucketUnsupported(t *testing.T) {
+	ctx := &requestctx.Context{
+		Method:  http.MethodPut,
+		Bucket:  "mybucket",
+		Key:     "",
+		Headers: http.Header{},
+	}
+	op, _ := Classify(ctx)
+	if op != OpUnknown {
+		t.Errorf("expected Unknown, got %s", op)
+	}
+}
+
 func TestClassify_DeleteObject(t *testing.T) {
 	ctx := &requestctx.Context{
 		Method: http.MethodDelete,
@@ -102,6 +115,18 @@ func TestClassify_DeleteObject(t *testing.T) {
 	op, _ := Classify(ctx)
 	if op != OpDeleteObject {
 		t.Errorf("expected DeleteObject, got %s", op)
+	}
+}
+
+func TestClassify_DeleteBucketUnsupported(t *testing.T) {
+	ctx := &requestctx.Context{
+		Method: http.MethodDelete,
+		Bucket: "mybucket",
+		Key:    "",
+	}
+	op, _ := Classify(ctx)
+	if op != OpUnknown {
+		t.Errorf("expected Unknown, got %s", op)
 	}
 }
 

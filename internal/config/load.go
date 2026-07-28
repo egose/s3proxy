@@ -2,9 +2,12 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -55,7 +58,7 @@ func expandEnvCalls(src []byte) []byte {
 			return []byte(`""`)
 		}
 		val := os.Getenv(string(sub[1]))
-		return []byte(`"` + val + `"`)
+		return []byte(strconv.Quote(val))
 	})
 }
 
@@ -77,11 +80,12 @@ type rawFile struct {
 }
 
 type rawListener struct {
-	Type       string        `hcl:"type,label"`
-	Name       string        `hcl:"name,label"`
-	Address    string        `hcl:"address"`
-	Addressing rawAddressing `hcl:"addressing,block"`
-	Timeouts   *rawTimeouts  `hcl:"timeouts,block"`
+	Type           string        `hcl:"type,label"`
+	Name           string        `hcl:"name,label"`
+	Address        string        `hcl:"address"`
+	MaxHeaderBytes int           `hcl:"max_header_bytes,optional"`
+	Addressing     rawAddressing `hcl:"addressing,block"`
+	Timeouts       *rawTimeouts  `hcl:"timeouts,block"`
 }
 
 type rawAddressing struct {
@@ -91,6 +95,7 @@ type rawAddressing struct {
 }
 
 type rawTimeouts struct {
+	Read       string `hcl:"read,optional"`
 	ReadHeader string `hcl:"read_header,optional"`
 	Idle       string `hcl:"idle,optional"`
 	Write      string `hcl:"write,optional"`
@@ -124,6 +129,7 @@ type rawTarget struct {
 	Endpoint       string `hcl:"endpoint"`
 	Region         string `hcl:"region"`
 	ForcePathStyle bool   `hcl:"force_path_style,optional"`
+	Timeout        string `hcl:"timeout,optional"`
 	Credentials    string `hcl:"credentials"`
 }
 
@@ -179,8 +185,9 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 		return nil, fmt.Errorf("unsupported listener type %q (only \"http\" is supported)", l.Type)
 	}
 	listener := Listener{
-		Name:    l.Name,
-		Address: l.Address,
+		Name:           l.Name,
+		Address:        l.Address,
+		MaxHeaderBytes: l.MaxHeaderBytes,
 		Addressing: Addressing{
 			PathStyle:     l.Addressing.PathStyle,
 			VirtualHosted: l.Addressing.VirtualHosted,
@@ -217,7 +224,7 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 			Name:           c.Name,
 			AccessKey:      c.AccessKey,
 			SecretKey:      c.SecretKey,
-			AllowRoutes:    c.AllowRoutes,
+			AllowRoutes:    stripRefList(c.AllowRoutes),
 			AllowOps:       c.AllowOps,
 			VisibleBuckets: c.VisibleBuckets,
 		}
@@ -252,11 +259,21 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 		if err != nil {
 			return nil, fmt.Errorf("target.s3 %q: %w", t.Name, err)
 		}
+		endpointURL, err := url.Parse(t.Endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("target.s3 %q: invalid endpoint: %w", t.Name, err)
+		}
+		timeout, err := parseOptionalDuration(t.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("target.s3 %q: invalid timeout: %w", t.Name, err)
+		}
 		rt.Targets[t.Name] = S3Target{
 			Name:           t.Name,
 			Endpoint:       t.Endpoint,
+			EndpointURL:    endpointURL,
 			Region:         t.Region,
 			ForcePathStyle: t.ForcePathStyle,
+			Timeout:        timeout,
 			Credentials:    cred,
 		}
 	}
@@ -267,8 +284,11 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 			return nil, fmt.Errorf("duplicate parser %q", p.Name)
 		}
 		kind := ParserKind(p.Type)
+		var compiled *regexp.Regexp
 		if kind == ParserBucketRegex {
-			if _, err := regexp.Compile(p.Pattern); err != nil {
+			var err error
+			compiled, err = regexp.Compile(p.Pattern)
+			if err != nil {
 				return nil, fmt.Errorf("parser.bucket_regex %q: invalid pattern: %w", p.Name, err)
 			}
 		}
@@ -279,6 +299,7 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 			Bucket:  p.Bucket,
 			Pattern: p.Pattern,
 			Suffix:  p.Suffix,
+			Regex:   compiled,
 		}
 	}
 
@@ -306,12 +327,21 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 			route.ReadPreference = ReadFirst
 		}
 		if r.Rewrite != nil {
+			var compiledTemplate *template.Template
+			if r.Rewrite.KeyTemplate != "" {
+				var err error
+				compiledTemplate, err = template.New("key").Option("missingkey=error").Parse(r.Rewrite.KeyTemplate)
+				if err != nil {
+					return nil, fmt.Errorf("route %q: invalid key_template: %w", r.Name, err)
+				}
+			}
 			route.Rewrite = RewriteRule{
 				StripPathPrefix:  r.Rewrite.StripPathPrefix,
 				StripKeyPrefix:   r.Rewrite.StripKeyPrefix,
 				PrependKeyPrefix: r.Rewrite.PrependKeyPrefix,
 				Bucket:           r.Rewrite.Bucket,
 				KeyTemplate:      r.Rewrite.KeyTemplate,
+				CompiledTemplate: compiledTemplate,
 			}
 		}
 		rt.Routes = append(rt.Routes, route)
@@ -331,6 +361,13 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 
 func parseTimeouts(t *rawTimeouts) (Timeouts, error) {
 	out := Timeouts{}
+	if t.Read != "" {
+		d, err := time.ParseDuration(t.Read)
+		if err != nil {
+			return out, fmt.Errorf("invalid read timeout: %w", err)
+		}
+		out.Read = d
+	}
 	if t.ReadHeader != "" {
 		d, err := time.ParseDuration(t.ReadHeader)
 		if err != nil {
@@ -353,6 +390,13 @@ func parseTimeouts(t *rawTimeouts) (Timeouts, error) {
 		out.Write = d
 	}
 	return out, nil
+}
+
+func parseOptionalDuration(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(raw)
 }
 
 func resolveCredentialRef(ref string, creds map[string]StaticCredential) (StaticCredential, error) {

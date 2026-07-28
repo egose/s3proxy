@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const exampleConfig = `
 listener "http" "public" {
   address = ":8080"
+  max_header_bytes = 65536
 
   addressing {
     path_style     = true
@@ -17,6 +19,7 @@ listener "http" "public" {
   }
 
   timeouts {
+    read        = "30s"
     read_header = "10s"
     idle        = "60s"
     write       = "0s"
@@ -47,6 +50,7 @@ target "s3" "primary" {
   endpoint         = "https://minio-a.internal"
   region           = "us-east-1"
   force_path_style = true
+  timeout          = "5s"
   credentials      = "primary"
 }
 
@@ -98,17 +102,38 @@ func TestLoadFile_ValidMinimal(t *testing.T) {
 	if rt.Listener.Address != ":8080" {
 		t.Errorf("expected address :8080, got %q", rt.Listener.Address)
 	}
+	if got, want := rt.Listener.MaxHeaderBytes, 65536; got != want {
+		t.Fatalf("expected max_header_bytes %d, got %d", want, got)
+	}
+	if got, want := rt.Listener.Timeouts.Read, 30*time.Second; got != want {
+		t.Fatalf("expected read timeout %s, got %s", want, got)
+	}
 	if rt.Auth.Mode != AuthModeSigV4Static {
 		t.Errorf("expected sigv4_static mode")
 	}
+	if got, want := rt.Auth.Clients["ci"].AllowRoutes[0], "images_rw"; got != want {
+		t.Fatalf("expected allow_routes[0] %q, got %q", want, got)
+	}
 	if _, ok := rt.Targets["primary"]; !ok {
 		t.Error("expected target 'primary'")
+	}
+	if got, want := rt.Targets["primary"].Timeout, 5*time.Second; got != want {
+		t.Fatalf("expected target timeout %s, got %s", want, got)
+	}
+	if rt.Targets["primary"].EndpointURL == nil {
+		t.Fatal("expected parsed endpoint URL")
 	}
 	if _, ok := rt.Parsers["images"]; !ok {
 		t.Error("expected parser 'images'")
 	}
 	if _, ok := rt.Parsers["tenant_logs"]; !ok {
 		t.Error("expected parser 'tenant_logs'")
+	}
+	if rt.Parsers["tenant_logs"].Regex == nil {
+		t.Fatal("expected parser 'tenant_logs' to have compiled regex")
+	}
+	if rt.Routes[0].Rewrite.CompiledTemplate != nil {
+		t.Fatal("expected first route to have no compiled key_template")
 	}
 	if len(rt.Routes) != 1 {
 		t.Fatalf("expected 1 route, got %d", len(rt.Routes))
@@ -262,5 +287,340 @@ route "r" {
 	}
 	if rt.Targets["t"].Credentials.AccessKey != "envkey" {
 		t.Errorf("expected env-expanded access key 'envkey', got %q", rt.Targets["t"].Credentials.AccessKey)
+	}
+}
+
+func TestLoadFile_EnvExpansionEscapesSpecialChars(t *testing.T) {
+	want := "line1\n\"quoted\"\\tail"
+	os.Setenv("S3PROXY_TEST_ESCAPED", want)
+	defer os.Unsetenv("S3PROXY_TEST_ESCAPED")
+
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" {
+  mode = "none"
+}
+
+credential "static" "c" {
+  access_key = env("S3PROXY_TEST_ESCAPED")
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := rt.Targets["t"].Credentials.AccessKey; got != want {
+		t.Fatalf("access key = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFile_CompilesKeyTemplate(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "bucket_regex" "p" { pattern = "^tenant-(?P<tenant>[a-z0-9-]+)-logs$" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+  rewrite {
+    bucket       = "shared-logs"
+    key_template = "{{ .Captures.tenant }}/{{ .Key }}"
+  }
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rt.Routes[0].Rewrite.CompiledTemplate == nil {
+		t.Fatal("expected compiled key_template")
+	}
+}
+
+func TestLoadFile_RejectsInvalidKeyTemplate(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+  rewrite {
+    key_template = "{{ .Captures.tenant }"
+  }
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for invalid key_template")
+	}
+}
+
+func TestLoadFile_AllowsOnMatchContinueForWriteRoutes(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["PutObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "continue"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := rt.Routes[0].OnMatch, MatchContinue; got != want {
+		t.Fatalf("OnMatch = %q, want %q", got, want)
+	}
+	if got, want := rt.Routes[0].Operations[0], "PutObject"; got != want {
+		t.Fatalf("operation = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFile_RejectsOnMatchContinueForReadRoutes(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "continue"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for on_match=continue on read routes")
+	}
+}
+
+func TestLoadFile_AllowsOrderedFailover(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser          = "p"
+  operations      = ["GetObject"]
+  destinations    = ["t"]
+  dispatch        = "first"
+  on_match        = "stop"
+  read_preference = "ordered_failover"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := rt.Routes[0].ReadPreference, ReadOrderedFailover; got != want {
+		t.Fatalf("ReadPreference = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFile_RejectsCopyObject(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["CopyObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for CopyObject")
+	}
+}
+
+func TestLoadFile_RejectsRelativeTargetEndpoint(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "minio.internal"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for relative endpoint")
+	}
+}
+
+func TestLoadFile_RejectsUnsupportedTargetEndpointScheme(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "ftp://minio.internal"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for unsupported endpoint scheme")
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,23 @@ func signRequest(t *testing.T, r *http.Request, body []byte) {
 // includes a request body.
 func signedRequest(t *testing.T, method, path string, body []byte, query url.Values) (*http.Response, []byte) {
 	t.Helper()
+	r := newProxyRequest(t, method, path, body, query)
+	if body != nil {
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	}
+	signRequest(t, r, body)
+	return doRequest(t, r)
+}
+
+func presignedRequest(t *testing.T, method, path string, query url.Values, signedAt time.Time, expires time.Duration) (*http.Response, []byte) {
+	t.Helper()
+	r := newProxyRequest(t, method, path, nil, query)
+	signPresignedRequest(t, r, signedAt, expires)
+	return doRequest(t, r)
+}
+
+func newProxyRequest(t *testing.T, method, path string, body []byte, query url.Values) *http.Request {
+	t.Helper()
 	target, err := url.Parse(proxyURL())
 	if err != nil {
 		t.Fatalf("parse proxy url: %v", err)
@@ -114,14 +132,42 @@ func signedRequest(t *testing.T, method, path string, body []byte, query url.Val
 		t.Fatalf("NewRequest failed: %v", err)
 	}
 	r.Host = u.Host
-	if body != nil {
-		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	return r
+}
+
+func signPresignedRequest(t *testing.T, r *http.Request, signedAt time.Time, expires time.Duration) {
+	t.Helper()
+	ak, sk := clientCreds()
+	query := r.URL.Query()
+	query.Set("X-Amz-Expires", strconv.FormatInt(int64(expires/time.Second), 10))
+	r.URL.RawQuery = query.Encode()
+
+	signedURI, _, err := v4.NewSigner().PresignHTTP(
+		context.Background(),
+		aws.Credentials{AccessKeyID: ak, SecretAccessKey: sk},
+		r,
+		"UNSIGNED-PAYLOAD",
+		"s3",
+		"us-east-1",
+		signedAt,
+	)
+	if err != nil {
+		t.Fatalf("PresignHTTP failed: %v", err)
 	}
-	signRequest(t, r, body)
+	parsed, err := url.Parse(signedURI)
+	if err != nil {
+		t.Fatalf("parse presigned url: %v", err)
+	}
+	r.URL = parsed
+	r.Host = parsed.Host
+}
+
+func doRequest(t *testing.T, r *http.Request) (*http.Response, []byte) {
+	t.Helper()
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		t.Fatalf("HTTP %s %s failed: %v", method, path, err)
+		t.Fatalf("HTTP %s %s failed: %v", r.Method, r.URL.String(), err)
 	}
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)

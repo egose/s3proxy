@@ -45,6 +45,14 @@ target "s3" "replica" {
   credentials      = "replica"
 }
 
+target "s3" "missing" {
+  endpoint         = "http://localhost:65534"
+  region           = "us-east-1"
+  force_path_style = true
+  timeout          = "250ms"
+  credentials      = "primary"
+}
+
 // Route /primary/* to MinIO only. Validates single-destination forwarding
 // against a real S3 backend.
 
@@ -110,6 +118,54 @@ route "replicate_rw" {
   }
 }
 
+parser "path_prefix" "failover_prefix" {
+  prefix = "/failover"
+}
+
+route "replica_failover_read" {
+  parser          = "failover_prefix"
+  operations      = ["GetObject", "HeadObject"]
+  destinations    = ["missing", "replica"]
+  dispatch        = "first"
+  on_match        = "stop"
+  read_preference = "ordered_failover"
+
+  rewrite {
+    strip_path_prefix = "/failover"
+    bucket            = "testbucket"
+  }
+}
+
+parser "path_prefix" "compose_prefix" {
+  prefix = "/compose"
+}
+
+route "compose_primary" {
+  parser       = "compose_prefix"
+  operations   = ["PutObject", "DeleteObject"]
+  destinations = ["primary"]
+  dispatch     = "first"
+  on_match     = "continue"
+
+  rewrite {
+    strip_path_prefix = "/compose"
+    bucket            = "testbucket"
+  }
+}
+
+route "compose_replica" {
+  parser       = "compose_prefix"
+  operations   = ["PutObject", "DeleteObject"]
+  destinations = ["replica"]
+  dispatch     = "first"
+  on_match     = "stop"
+
+  rewrite {
+    strip_path_prefix = "/compose"
+    bucket            = "testbucket"
+  }
+}
+
 // Virtual buckets exposed to authenticated clients via ListBuckets.
 
 bucket "primary_visible" {
@@ -125,4 +181,14 @@ bucket "replica_visible" {
 bucket "replicate_visible" {
   visible_name = "replicate-bucket"
   route        = "replicate_rw"
+}
+
+bucket "failover_visible" {
+  visible_name = "failover-bucket"
+  route        = "replica_failover_read"
+}
+
+bucket "compose_visible" {
+  visible_name = "compose-bucket"
+  route        = "compose_primary"
 }

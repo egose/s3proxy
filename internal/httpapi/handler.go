@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/egose/s3proxy/internal/auth"
 	"github.com/egose/s3proxy/internal/backend/s3"
@@ -78,7 +81,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		xmls3.WriteNotImplemented(w, requestID)
 		return
 	}
-	if op == s3ops.OpUnknown {
+	if op == s3ops.OpUnknown || op == s3ops.OpListObjectsV1 || op == s3ops.OpCopyObject {
 		xmls3.WriteNotImplemented(w, requestID)
 		return
 	}
@@ -101,39 +104,66 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		xmls3.WriteNoSuchBucket(w, requestID, ctx.Bucket)
 		return
 	}
-	match := matches[0]
 
-	if !h.deps.Authorizer.AllowRoute(principal, match.Route.Name, op) {
-		logger.Warn("route not authorized", "route", match.Route.Name)
-		xmls3.WriteAccessDenied(w, requestID)
-		return
-	}
-
-	rwResult, err := h.deps.Rewriter.Apply(ctx, match.Route, match.Captures)
-	if err != nil {
-		logger.Error("rewrite failed", "error", err)
-		xmls3.WriteInternalError(w, requestID)
-		return
-	}
-
-	logger = logger.With("route", match.Route.Name, "bucket", rwResult.Bucket, "key", rwResult.Key)
-
-	dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rwResult)
-	if err != nil {
-		logger.Error("dispatch failed", "error", err)
-		// If the dispatcher produced a Primary response (typical for fan-out
-		// partial-success), surface the upstream's actual status + body so
-		// clients see MinIO/SeaweedFS error XML rather than a generic 502.
-		if dispResult != nil && dispResult.Primary != nil {
-			writeS3Response(w, dispResult.Primary)
+	for _, match := range matches {
+		if !h.deps.Authorizer.AllowRoute(principal, match.Route.Name, op) {
+			logger.Warn("route not authorized", "route", match.Route.Name)
+			xmls3.WriteAccessDenied(w, requestID)
 			return
 		}
-		xmls3.WriteBadGateway(w, requestID)
-		return
 	}
 
-	if dispResult.Primary != nil {
-		writeS3Response(w, dispResult.Primary)
+	if len(matches) > 1 {
+		if err := ensureReplayableBody(r); err != nil {
+			logger.Error("request body read failed", "error", err)
+			xmls3.WriteBadGateway(w, requestID)
+			return
+		}
+	}
+
+	var primary *s3.Response
+	for _, match := range matches {
+		if len(matches) > 1 {
+			if err := resetRequestBody(r); err != nil {
+				logger.Error("request body reset failed", "error", err)
+				xmls3.WriteBadGateway(w, requestID)
+				return
+			}
+		}
+
+		rwResult, err := h.deps.Rewriter.Apply(ctx, match.Route, match.Captures)
+		if err != nil {
+			logger.Error("rewrite failed", "route", match.Route.Name, "error", err)
+			xmls3.WriteInternalError(w, requestID)
+			return
+		}
+
+		matchLogger := logger.With("route", match.Route.Name, "bucket", rwResult.Bucket, "key", rwResult.Key)
+		dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rwResult)
+		if err != nil {
+			matchLogger.Error("dispatch failed", "error", err)
+			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.StatusCode >= http.StatusBadRequest {
+				writeS3Response(w, dispResult.Primary)
+				return
+			}
+			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.Body != nil {
+				dispResult.Primary.Body.Close()
+			}
+			xmls3.WriteBadGateway(w, requestID)
+			return
+		}
+
+		if dispResult != nil && dispResult.Primary != nil {
+			if primary == nil {
+				primary = dispResult.Primary
+			} else if dispResult.Primary.Body != nil {
+				dispResult.Primary.Body.Close()
+			}
+		}
+	}
+
+	if primary != nil {
+		writeS3Response(w, primary)
 		return
 	}
 
@@ -159,7 +189,11 @@ func (h *handler) handleListBuckets(w http.ResponseWriter, principal *auth.Princ
 }
 
 func writeS3Response(w http.ResponseWriter, resp *s3.Response) {
+	connectionTokens := connectionHeaderTokens(resp.Header)
 	for key, vals := range resp.Header {
+		if isHopByHopHeader(key, connectionTokens) {
+			continue
+		}
 		for _, v := range vals {
 			w.Header().Add(key, v)
 		}
@@ -169,4 +203,69 @@ func writeS3Response(w http.ResponseWriter, resp *s3.Response) {
 		io.Copy(w, resp.Body)
 		resp.Body.Close()
 	}
+}
+
+func ensureReplayableBody(r *http.Request) error {
+	if r.Body == nil || r.Body == http.NoBody || r.GetBody != nil {
+		return nil
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	installReplayableBody(r, body)
+	return nil
+}
+
+func resetRequestBody(r *http.Request) error {
+	if r.GetBody == nil {
+		if r.Body == nil {
+			r.Body = http.NoBody
+		}
+		return nil
+	}
+	body, err := r.GetBody()
+	if err != nil {
+		return fmt.Errorf("get request body: %w", err)
+	}
+	r.Body = body
+	return nil
+}
+
+func installReplayableBody(r *http.Request, body []byte) {
+	if body == nil {
+		r.Body = http.NoBody
+		r.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
+		r.ContentLength = 0
+		return
+	}
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+}
+
+func isHopByHopHeader(name string, connectionTokens map[string]struct{}) bool {
+	canonical := strings.ToLower(name)
+	switch canonical {
+	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+		"te", "trailer", "transfer-encoding", "upgrade":
+		return true
+	}
+	_, ok := connectionTokens[canonical]
+	return ok
+}
+
+func connectionHeaderTokens(headers http.Header) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, raw := range headers.Values("Connection") {
+		for _, token := range strings.Split(raw, ",") {
+			token = strings.ToLower(strings.TrimSpace(token))
+			if token != "" {
+				tokens[token] = struct{}{}
+			}
+		}
+	}
+	return tokens
 }

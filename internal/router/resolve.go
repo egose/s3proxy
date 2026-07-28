@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math/rand"
-	"regexp"
 	"strings"
 
 	"github.com/egose/s3proxy/internal/config"
@@ -113,15 +112,14 @@ func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]str
 		return false, nil, nil
 
 	case config.ParserBucketRegex:
-		re, err := regexp.Compile(p.Pattern)
-		if err != nil {
-			return false, nil, err
+		if p.Regex == nil {
+			return false, nil, fmt.Errorf("bucket_regex parser %q has no compiled regexp", p.Name)
 		}
-		match := re.FindStringSubmatch(ctx.Bucket)
+		match := p.Regex.FindStringSubmatch(ctx.Bucket)
 		if match == nil {
 			return false, nil, nil
 		}
-		for i, name := range re.SubexpNames() {
+		for i, name := range p.Regex.SubexpNames() {
 			if i > 0 && name != "" && i < len(match) {
 				captures[name] = match[i]
 			}
@@ -129,13 +127,25 @@ func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]str
 		return true, captures, nil
 
 	case config.ParserHostSuffix:
-		if strings.HasSuffix(ctx.Host, p.Suffix) {
+		if hostMatchesSuffix(ctx.Host, p.Suffix) {
 			return true, captures, nil
 		}
 		return false, nil, nil
 	}
 
 	return false, nil, nil
+}
+
+func hostMatchesSuffix(host, suffix string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	suffix = strings.ToLower(strings.TrimSuffix(suffix, "."))
+	if host == "" || suffix == "" {
+		return false
+	}
+	if host == suffix {
+		return true
+	}
+	return strings.HasSuffix(host, "."+suffix)
 }
 
 func routeAllowsOperation(route config.Route, op s3ops.Operation) bool {

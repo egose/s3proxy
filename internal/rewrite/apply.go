@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"text/template"
 
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/requestctx"
@@ -62,12 +61,11 @@ func (e *engine) Apply(ctx *requestctx.Context, route config.Route, captures map
 			Key:      key,
 			Captures: captures,
 		}
-		tmpl, err := template.New("key").Option("missingkey=invalid").Parse(rw.KeyTemplate)
-		if err != nil {
-			return Result{}, fmt.Errorf("invalid key_template: %w", err)
+		if rw.CompiledTemplate == nil {
+			return Result{}, fmt.Errorf("invalid key_template: compiled template missing")
 		}
 		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, data); err != nil {
+		if err := rw.CompiledTemplate.Execute(&buf, data); err != nil {
 			return Result{}, fmt.Errorf("key_template execution failed: %w", err)
 		}
 		key = buf.String()
