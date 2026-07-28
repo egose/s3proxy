@@ -11,8 +11,8 @@ auth "main" {
   mode = "sigv4_static"
 
   client "ci" {
-    access_key = env("S3PROXY_CLIENT_CI_ACCESS_KEY")
-    secret_key = env("S3PROXY_CLIENT_CI_SECRET_KEY")
+    access_key      = env("S3PROXY_CLIENT_CI_ACCESS_KEY")
+    secret_key      = env("S3PROXY_CLIENT_CI_SECRET_KEY")
     allow_routes    = ["*"]
     visible_buckets = ["*"]
   }
