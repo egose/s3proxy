@@ -66,7 +66,7 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 		return nil, err
 	}
 
-	for _, dest := range match.Destinations {
+	for i, dest := range match.Destinations {
 		if err := resetRequestBody(req); err != nil {
 			return nil, err
 		}
@@ -87,18 +87,22 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
 		}
 
-		if result.Primary == nil {
-			// The first response becomes the primary and is streamed back
-			// to the client by the httpapi; do NOT close its body here.
+		if i == 0 {
 			result.Primary = resp
 		} else {
-			// Non-primary responses are not surfaced to the client; close
-			// their bodies immediately to release the upstream connection.
-			resp.Body.Close()
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
 		}
 	}
 
 	if len(result.Errors) > 0 {
+		if result.Primary != nil && result.Primary.StatusCode < 400 {
+			if result.Primary.Body != nil {
+				result.Primary.Body.Close()
+			}
+			result.Primary = nil
+		}
 		return result, fmt.Errorf("fan-out had %d failures", len(result.Errors))
 	}
 

@@ -76,6 +76,30 @@ func TestHandler_ContinueDispatchesAllWriteMatches(t *testing.T) {
 	}
 }
 
+func TestHandler_DispatchErrorWithSuccessfulPrimaryReturnsBadGateway(t *testing.T) {
+	dispatcher := &stubFanout{
+		results: []*dispatch.Result{{Primary: &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}}},
+		errs:    []error{context.DeadlineExceeded},
+	}
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    dispatcher,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("payload"))
+	req.ContentLength = int64(len("payload"))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadGateway)
+	}
+}
+
 func TestWriteS3Response_StripsHopByHopHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
 	writeS3Response(rr, &s3.Response{
@@ -129,12 +153,17 @@ func (stubRewriter) Apply(*requestctx.Context, config.Route, map[string]string) 
 type stubFanout struct {
 	matches []router.Match
 	results []*dispatch.Result
+	errs    []error
 	index   int
 }
 
 func (s *stubFanout) Dispatch(_ context.Context, match router.Match, _ *http.Request, _ s3ops.Operation, _ rewrite.Result) (*dispatch.Result, error) {
 	s.matches = append(s.matches, match)
 	result := s.results[s.index]
+	var err error
+	if s.index < len(s.errs) {
+		err = s.errs[s.index]
+	}
 	s.index++
-	return result, nil
+	return result, err
 }

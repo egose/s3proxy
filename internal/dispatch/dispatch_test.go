@@ -44,6 +44,71 @@ func TestDispatch_FanoutBodyReadError(t *testing.T) {
 	}
 }
 
+func TestDispatch_FanoutReplicaFailureClearsSuccessfulPrimary(t *testing.T) {
+	backend := &stubBackend{
+		responses: []stubCall{
+			{resp: responseWithStatus(http.StatusOK)},
+			{err: errors.New("replica write failed")},
+		},
+	}
+	d := &dispatcher{backend: backend}
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = int64(len("payload"))
+
+	result, err := d.Dispatch(context.Background(), router.Match{
+		Route: config.Route{
+			Dispatch:        config.DispatchAll,
+			DestinationRefs: []string{"primary", "replica"},
+		},
+		Destinations: []config.S3Target{{Name: "primary"}, {Name: "replica"}},
+	}, req, s3ops.OpPutObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+	if err == nil {
+		t.Fatal("expected fan-out error")
+	}
+	if result == nil {
+		t.Fatal("expected dispatch result")
+	}
+	if result.Primary != nil {
+		t.Fatalf("expected primary response to be cleared on partial failure, got %#v", result.Primary)
+	}
+}
+
+func TestDispatch_FanoutPrimaryFailurePreservesPrimaryError(t *testing.T) {
+	backend := &stubBackend{
+		responses: []stubCall{
+			{resp: responseWithStatus(http.StatusForbidden)},
+			{resp: responseWithStatus(http.StatusOK)},
+		},
+	}
+	d := &dispatcher{backend: backend}
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = int64(len("payload"))
+
+	result, err := d.Dispatch(context.Background(), router.Match{
+		Route: config.Route{
+			Dispatch:        config.DispatchAll,
+			DestinationRefs: []string{"primary", "replica"},
+		},
+		Destinations: []config.S3Target{{Name: "primary"}, {Name: "replica"}},
+	}, req, s3ops.OpPutObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+	if err == nil {
+		t.Fatal("expected fan-out error")
+	}
+	if result == nil || result.Primary == nil {
+		t.Fatalf("expected primary error response, got %#v", result)
+	}
+	if got, want := result.Primary.StatusCode, http.StatusForbidden; got != want {
+		t.Fatalf("StatusCode = %d, want %d", got, want)
+	}
+	result.Primary.Body.Close()
+}
+
 func TestDispatch_OrderedFailoverRetriesTransportError(t *testing.T) {
 	backend := &stubBackend{
 		responses: []stubCall{

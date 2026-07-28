@@ -142,9 +142,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rwResult)
 		if err != nil {
 			matchLogger.Error("dispatch failed", "error", err)
-			if dispResult != nil && dispResult.Primary != nil {
+			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.StatusCode >= http.StatusBadRequest {
 				writeS3Response(w, dispResult.Primary)
 				return
+			}
+			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.Body != nil {
+				dispResult.Primary.Body.Close()
 			}
 			xmls3.WriteBadGateway(w, requestID)
 			return
