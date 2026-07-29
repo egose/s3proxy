@@ -598,6 +598,52 @@ route "r" {
 	}
 }
 
+func TestLoadFile_AllowsDispatchAllForMixedReadWriteRoutes(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t1" {
+  endpoint    = "https://e1"
+  region      = "r"
+  credentials = "c"
+}
+target "s3" "t2" {
+  endpoint    = "https://e2"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser          = "p"
+  operations      = ["GetObject", "PutObject", "DeleteObject"]
+  destinations    = ["t1", "t2"]
+  dispatch        = "all"
+  on_match        = "stop"
+  read_preference = "random"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := rt.Routes[0].Dispatch, DispatchAll; got != want {
+		t.Fatalf("Dispatch = %q, want %q", got, want)
+	}
+	if got, want := rt.Routes[0].ReadPreference, ReadRandom; got != want {
+		t.Fatalf("ReadPreference = %q, want %q", got, want)
+	}
+}
+
 func TestLoadFile_RejectsCopyObject(t *testing.T) {
 	cfg := `
 listener "http" "public" {

@@ -189,11 +189,14 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 			if op == "CopyObject" {
 				return fmt.Errorf("route %q: operation %q is not implemented", r.Name, op)
 			}
-			if r.Dispatch == DispatchAll && !supportsDispatchAll(op) {
-				return fmt.Errorf("route %q: dispatch %q is only implemented for PutObject and DeleteObject, got %q", r.Name, r.Dispatch, op)
+			if r.Dispatch == DispatchAll && !supportsDispatchAllRouteOperation(op) {
+				return fmt.Errorf("route %q: dispatch %q does not support write operation %q", r.Name, r.Dispatch, op)
 			}
 		}
-		if r.Dispatch == DispatchAll && r.ReadPreference != ReadFirst {
+		if r.Dispatch == DispatchAll && !routeHasFanoutWrite(r) {
+			return fmt.Errorf("route %q: dispatch %q requires PutObject or DeleteObject", r.Name, r.Dispatch)
+		}
+		if r.Dispatch == DispatchAll && !routeHasRead(r) && r.ReadPreference != ReadFirst {
 			return fmt.Errorf("route %q: read_preference is ignored for dispatch=all", r.Name)
 		}
 	}
@@ -248,6 +251,37 @@ func routeSupportsContinue(r Route) bool {
 func supportsDispatchAll(op string) bool {
 	switch op {
 	case "PutObject", "DeleteObject":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportsDispatchAllRouteOperation(op string) bool {
+	return isReadOperation(op) || supportsDispatchAll(op)
+}
+
+func routeHasFanoutWrite(r Route) bool {
+	for _, op := range r.Operations {
+		if supportsDispatchAll(op) {
+			return true
+		}
+	}
+	return false
+}
+
+func routeHasRead(r Route) bool {
+	for _, op := range r.Operations {
+		if isReadOperation(op) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReadOperation(op string) bool {
+	switch op {
+	case "GetObject", "HeadObject", "HeadBucket", "ListObjectsV2", "ListBuckets":
 		return true
 	default:
 		return false
