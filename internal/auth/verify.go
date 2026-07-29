@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -88,7 +89,7 @@ func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
 	if err != nil {
 		return nil, err
 	}
-	if generatedSignature != providedSignature {
+	if subtle.ConstantTimeCompare([]byte(generatedSignature), []byte(providedSignature)) != 1 {
 		return nil, errSignatureMismatch
 	}
 
@@ -148,7 +149,7 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 	}
 
 	generated := clone.URL.Query().Get("X-Amz-Signature")
-	if generated != provided {
+	if subtle.ConstantTimeCompare([]byte(generated), []byte(provided)) != 1 {
 		return nil, errSignatureMismatch
 	}
 
