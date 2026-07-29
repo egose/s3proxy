@@ -10,6 +10,7 @@ import (
 
 	"github.com/egose/s3proxy/internal/backend/s3"
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
 	"github.com/egose/s3proxy/internal/s3ops"
@@ -41,6 +42,26 @@ func TestDispatch_FanoutBodyReadError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "read request body") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDispatch_FanoutRejectsOversizedBody(t *testing.T) {
+	d := &dispatcher{backend: &stubBackend{}}
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", io.NopCloser(strings.NewReader("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = replaybody.DefaultMaxBytes + 1
+
+	_, err = d.Dispatch(context.Background(), router.Match{
+		Route: config.Route{
+			Dispatch:        config.DispatchAll,
+			DestinationRefs: []string{"primary", "replica"},
+		},
+		Destinations: []config.S3Target{{Name: "primary"}, {Name: "replica"}},
+	}, req, s3ops.OpPutObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+	if !replaybody.IsTooLarge(err) {
+		t.Fatalf("expected oversized replay error, got %v", err)
 	}
 }
 

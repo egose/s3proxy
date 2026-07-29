@@ -110,3 +110,20 @@ func TestFromRequest_PreservesEscapedPathKey(t *testing.T) {
 		t.Fatalf("Key = %q, want %q", got, want)
 	}
 }
+
+func TestFromRequest_RejectsPathStyleWhenDisabled(t *testing.T) {
+	cfg := config.Addressing{
+		VirtualHosted: true,
+		HostSuffixes:  []string{"s3proxy.example.com"},
+	}
+	r := &http.Request{
+		Host:   "localhost:8080",
+		URL:    &url.URL{Path: "/mybucket/path/to/object.txt"},
+		Method: "GET",
+	}
+
+	_, err := FromRequest(r, cfg)
+	if !IsNoAddressingMatch(err) {
+		t.Fatalf("expected no-addressing-match error, got %v", err)
+	}
+}

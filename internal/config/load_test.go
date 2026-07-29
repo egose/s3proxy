@@ -11,6 +11,7 @@ const exampleConfig = `
 listener "http" "public" {
   address = ":8080"
   max_header_bytes = 65536
+  replay_body_max_bytes = 1048576
 
   addressing {
     path_style     = true
@@ -104,6 +105,9 @@ func TestLoadFile_ValidMinimal(t *testing.T) {
 	}
 	if got, want := rt.Listener.MaxHeaderBytes, 65536; got != want {
 		t.Fatalf("expected max_header_bytes %d, got %d", want, got)
+	}
+	if got, want := rt.Listener.ReplayBodyMaxBytes, int64(1048576); got != want {
+		t.Fatalf("expected replay_body_max_bytes %d, got %d", want, got)
 	}
 	if got, want := rt.Listener.Timeouts.Read, 30*time.Second; got != want {
 		t.Fatalf("expected read timeout %s, got %s", want, got)
@@ -523,6 +527,77 @@ route "r" {
 	}
 }
 
+func TestLoadFile_RejectsDispatchAllForReadRoutes(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "all"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for dispatch=all on read route")
+	}
+}
+
+func TestLoadFile_AllowsDispatchAllForWriteRoutes(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["PutObject", "DeleteObject"]
+  destinations = ["t"]
+  dispatch     = "all"
+  on_match     = "stop"
+}
+`
+	rt, err := LoadFile(writeTmpConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := rt.Routes[0].Dispatch, DispatchAll; got != want {
+		t.Fatalf("Dispatch = %q, want %q", got, want)
+	}
+}
+
 func TestLoadFile_RejectsCopyObject(t *testing.T) {
 	cfg := `
 listener "http" "public" {
@@ -622,5 +697,40 @@ route "r" {
 	_, err := LoadFile(writeTmpConfig(t, cfg))
 	if err == nil {
 		t.Fatal("expected error for unsupported endpoint scheme")
+	}
+}
+
+func TestLoadFile_RejectsNegativeReplayBodyMaxBytes(t *testing.T) {
+	cfg := `
+listener "http" "public" {
+  address = ":8080"
+  replay_body_max_bytes = -1
+  addressing { path_style = true }
+}
+
+auth "main" { mode = "none" }
+
+credential "static" "c" {
+  access_key = "k"
+  secret_key = "s"
+}
+target "s3" "t" {
+  endpoint    = "https://e"
+  region      = "r"
+  credentials = "c"
+}
+
+parser "path_prefix" "p" { prefix = "/p" }
+route "r" {
+  parser       = "p"
+  operations   = ["GetObject"]
+  destinations = ["t"]
+  dispatch     = "first"
+  on_match     = "stop"
+}
+`
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for negative replay_body_max_bytes")
 	}
 }
