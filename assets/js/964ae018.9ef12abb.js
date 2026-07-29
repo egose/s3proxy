@@ -386,12 +386,18 @@ function _createMdxContent(props) {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "DeleteObject"
         }), " is supported"]
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "the request body is buffered in memory so it can be replayed"
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["the request body is buffered in memory so it can be replayed, bounded by ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_max_bytes"
+        })]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "if any destination fails, the request fails overall"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "the client receives the primary upstream response body on failure"
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["oversized replay attempts fail with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "413 EntityTooLarge"
+        })]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "outbound-signing",

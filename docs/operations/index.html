@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">Operations | s3proxy</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://s3proxy.pages.dev/img/social-card.svg"><meta data-rh="true" name="twitter:image" content="https://s3proxy.pages.dev/img/social-card.svg"><meta data-rh="true" property="og:url" content="https://s3proxy.pages.dev/docs/operations"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Operations | s3proxy"><meta data-rh="true" name="description" content="This page covers the commands and runtime behavior that matter most when working on or operating s3proxy."><meta data-rh="true" property="og:description" content="This page covers the commands and runtime behavior that matter most when working on or operating s3proxy."><link data-rh="true" rel="icon" href="/img/logo.svg"><link data-rh="true" rel="canonical" href="https://s3proxy.pages.dev/docs/operations"><link data-rh="true" rel="alternate" href="https://s3proxy.pages.dev/docs/operations" hreflang="en"><link data-rh="true" rel="alternate" href="https://s3proxy.pages.dev/docs/operations" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Operations","item":"https://s3proxy.pages.dev/docs/operations"}]}</script><link rel="stylesheet" href="/assets/css/styles.92288b91.css">
-<script src="/assets/js/runtime~main.fe0bda5a.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.30c155ba.js" defer="defer"></script>
 <script src="/assets/js/main.307d068e.js" defer="defer"></script>
 </head>
 <body>
@@ -48,10 +48,11 @@
 <ul>
 <li class="">only one listener is supported</li>
 <li class="">config changes require a restart; there is no hot reload in v1</li>
-<li class="">request bodies for fan-out writes are buffered in memory</li>
+<li class="">request bodies that need replay are buffered in memory up to <code>listener.replay_body_max_bytes</code></li>
 <li class="">reads use one effective backend even when a route has multiple destinations</li>
 <li class="">target <code>timeout</code> directly affects failover timing for <code>ordered_failover</code></li>
 </ul>
+<p>If the replay limit is exceeded, the proxy returns <code>413 EntityTooLarge</code> instead of attempting the upstream request.</p>
 <h2 class="anchor anchorTargetStickyNavbar_T7vg" id="logging-and-diagnostics">Logging And Diagnostics<a href="#logging-and-diagnostics" class="hash-link" aria-label="Direct link to Logging And Diagnostics" title="Direct link to Logging And Diagnostics" translate="no">​</a></h2>
 <p>Use <code>s3proxy validate --config ...</code> before rollouts to catch configuration errors such as:</p>
 <ul>

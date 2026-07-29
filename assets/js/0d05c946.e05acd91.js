@@ -144,8 +144,10 @@ function _createMdxContent(props) {
         children: "writes must land on every backend"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "reads can still prefer one backend"
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "you understand the memory cost of buffering write bodies for replay"
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["you have sized ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_max_bytes"
+        }), " for the largest write you expect to replay"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "ordered-read-failover",

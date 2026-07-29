@@ -215,8 +215,10 @@ function _createMdxContent(props) {
         children: "only one listener is supported"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "config changes require a restart; there is no hot reload in v1"
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "request bodies for fan-out writes are buffered in memory"
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["request bodies that need replay are buffered in memory up to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_max_bytes"
+        })]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "reads use one effective backend even when a route has multiple destinations"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
@@ -226,6 +228,10 @@ function _createMdxContent(props) {
           children: "ordered_failover"
         })]
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["If the replay limit is exceeded, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "413 EntityTooLarge"
+      }), " instead of attempting the upstream request."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "logging-and-diagnostics",
       children: "Logging And Diagnostics"

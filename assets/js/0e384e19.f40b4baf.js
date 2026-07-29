@@ -273,7 +273,9 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["For ", (0,jsx_runtime.jsx)(_components.code, {
           children: "dispatch = \"all\""
-        }), ", write request bodies are buffered in memory before they are replayed to each destination."]
+        }), ", write request bodies are buffered in memory before they are replayed to each destination, bounded by ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_max_bytes"
+        }), "."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "ordered_failover"
