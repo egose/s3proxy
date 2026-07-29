@@ -1,18 +1,17 @@
-## Unreleased
+## [0.1.0](https://github.com/egose/s3proxy/compare/v0.0.1...v0.1.0) (2026-07-29)
 
 ### Features
 
-* add configurable replay body limits for multi-route, fan-out, and unknown-length outbound request replay
+* **website:** add Docusaurus website and documentation ([1bba1d2](https://github.com/egose/s3proxy/commit/1bba1d2df28c78e6291e2e6b11e3843cf0cd921e))
+* **website:** add replay body limits and shared replay helpers ([036201f](https://github.com/egose/s3proxy/commit/036201fb6c09cb98fbf83c5df18cd24bf59448ee))
+* **website:** document replay limits and listener addressing behavior ([ecfbc29](https://github.com/egose/s3proxy/commit/ecfbc2953b976e4333291a661de00292fa5f698c))
 
 ### Bug Fixes
 
-* enforce listener addressing modes, tighten dispatch=all validation, and return signature-specific auth failures
+* allow dispatch all for mixed read and write routes ([f2b6289](https://github.com/egose/s3proxy/commit/f2b628926f87389baa79543b02fbf0e49050f039))
+* **website:** return signature mismatches and invalid addressing errors ([32484fe](https://github.com/egose/s3proxy/commit/32484fe8be1ea3074b7b442accd01454c2239e41))
 
-### Documentation
-
-* document `replay_body_max_bytes` and `413 EntityTooLarge` replay behavior across README and docs
-
-## 0.0.1 (2026-07-28)
+## [0.0.1](https://github.com/egose/s3proxy/compare/dd806ee5b2164c23e30ce6b59aa0b8e3c4e2ab73...v0.0.1) (2026-07-28)
 
 ### Features
 
