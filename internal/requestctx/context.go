@@ -1,6 +1,7 @@
 package requestctx
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,6 +26,12 @@ type Context struct {
 	Headers        http.Header
 	AddressingMode AddressingMode
 	Captures       map[string]string
+}
+
+var errNoAddressingMatch = errors.New("request does not match enabled listener addressing modes")
+
+func IsNoAddressingMatch(err error) bool {
+	return errors.Is(err, errNoAddressingMatch)
 }
 
 func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
@@ -58,11 +65,15 @@ func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
 		ctx.Key = key
 	}
 
-	if ctx.AddressingMode == "" {
+	if ctx.AddressingMode == "" && cfg.PathStyle {
 		ctx.AddressingMode = AddressingPathStyle
 		bucket, key := parsePathStyle(escapedPath)
 		ctx.Bucket = bucket
 		ctx.Key = key
+	}
+
+	if ctx.AddressingMode == "" {
+		return nil, errNoAddressingMatch
 	}
 
 	return ctx, nil

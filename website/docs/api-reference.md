@@ -95,9 +95,10 @@ For `dispatch = "all"`:
 
 - `PutObject` is supported
 - `DeleteObject` is supported
-- the request body is buffered in memory so it can be replayed
+- the request body is buffered in memory so it can be replayed, bounded by `listener.replay_body_max_bytes`
 - if any destination fails, the request fails overall
 - the client receives the primary upstream response body on failure
+- oversized replay attempts fail with `413 EntityTooLarge`
 
 ## Outbound Signing
 

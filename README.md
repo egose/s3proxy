@@ -92,6 +92,7 @@ Please check the [asdf documentation](https://github.com/asdf-vm/asdf) for more 
 ```hcl
 listener "http" "public" {
   address = ":8080"
+  replay_body_max_bytes = 33554432
 
   addressing {
     path_style     = true
@@ -170,6 +171,8 @@ bucket "images" {
   route        = "images_rw"
 }
 ```
+
+`replay_body_max_bytes` limits how much request body the proxy will buffer in memory when it needs a replayable body, such as `dispatch = "all"`, `on_match = "continue"`, or unknown-length outbound uploads. `0` uses the built-in default of `33554432` bytes (`32 MiB`). Oversized replay attempts fail with `413 EntityTooLarge`.
 
 ## CLI
 
@@ -256,8 +259,9 @@ values into the config file.
   `ordered_failover`, this directly bounds how long the proxy waits before
   failing over from a slow or unreachable backend.
 - `ListBuckets` returns proxy-defined virtual buckets, not upstream discovery.
-- Request body fan-out for multi-destination writes reads the entire body into
-  memory before replaying to each destination.
+- Request body replay for multi-destination writes, multi-route writes, and
+  unknown-length outbound uploads is bounded by `listener.replay_body_max_bytes`
+  and fails with `413 EntityTooLarge` when exceeded.
 
 ## Deferred / Planned
 

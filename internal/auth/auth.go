@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -98,4 +99,8 @@ func matchOpList(allow []string, op s3ops.Operation) bool {
 		}
 	}
 	return false
+}
+
+func IsSignatureMismatch(err error) bool {
+	return errors.Is(err, errSignatureMismatch)
 }

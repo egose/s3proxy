@@ -13,8 +13,29 @@ import (
 	"time"
 
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/s3ops"
 )
+
+type generatedReadCloser struct {
+	remaining int64
+}
+
+func (r *generatedReadCloser) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	for i := range p {
+		p[i] = 'x'
+	}
+	r.remaining -= int64(len(p))
+	return len(p), nil
+}
+
+func (*generatedReadCloser) Close() error { return nil }
 
 func mustURL(t *testing.T, raw string) *url.URL {
 	t.Helper()
@@ -343,6 +364,107 @@ func TestClientDo_UsesGetBodyOncePerRequest(t *testing.T) {
 	resp.Body.Close()
 	if got, want := getBodyCalls, 1; got != want {
 		t.Fatalf("GetBody calls = %d, want %d", got, want)
+	}
+}
+
+func TestClientDo_BuffersUnknownLengthSourceBodyWithinLimit(t *testing.T) {
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		bodies = append(bodies, string(body))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Body = io.NopCloser(strings.NewReader("payload"))
+	src.ContentLength = -1
+
+	client := NewClientWithReplayLimit(&http.Client{}, 16)
+	request := Request{
+		Operation: s3ops.OpPutObject,
+		Target: config.S3Target{
+			Endpoint:       server.URL,
+			EndpointURL:    mustURL(t, server.URL),
+			Region:         "us-east-1",
+			ForcePathStyle: true,
+			Credentials: config.StaticCredential{
+				AccessKey: "ak",
+				SecretKey: "sk",
+			},
+		},
+		Bucket: "bucket",
+		Key:    "key",
+		Source: src,
+	}
+
+	resp, err := client.Do(context.Background(), request)
+	if err != nil {
+		t.Fatalf("first Do failed: %v", err)
+	}
+	resp.Body.Close()
+	resp, err = client.Do(context.Background(), request)
+	if err != nil {
+		t.Fatalf("second Do failed: %v", err)
+	}
+	resp.Body.Close()
+
+	if got, want := len(bodies), 2; got != want {
+		t.Fatalf("calls = %d, want %d", got, want)
+	}
+	if src.GetBody == nil {
+		t.Fatal("expected unknown-length source body to become replayable")
+	}
+	for i, body := range bodies {
+		if body != "payload" {
+			t.Fatalf("body[%d] = %q, want payload", i, body)
+		}
+	}
+}
+
+func TestClientDo_RejectsOversizedUnknownLengthSourceBody(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Body = &generatedReadCloser{remaining: replaybody.DefaultMaxBytes + 1}
+	src.ContentLength = -1
+
+	client := NewClientWithReplayLimit(&http.Client{}, 3)
+	_, err = client.Do(context.Background(), Request{
+		Operation: s3ops.OpPutObject,
+		Target: config.S3Target{
+			Endpoint:       server.URL,
+			EndpointURL:    mustURL(t, server.URL),
+			Region:         "us-east-1",
+			ForcePathStyle: true,
+			Credentials: config.StaticCredential{
+				AccessKey: "ak",
+				SecretKey: "sk",
+			},
+		},
+		Bucket: "bucket",
+		Key:    "key",
+		Source: src,
+	})
+	if !replaybody.IsTooLarge(err) {
+		t.Fatalf("expected oversized replay error, got %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("unexpected upstream call count = %d, want 0", calls)
 	}
 }
 

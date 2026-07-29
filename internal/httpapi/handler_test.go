@@ -12,6 +12,7 @@ import (
 	"github.com/egose/s3proxy/internal/backend/s3"
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/dispatch"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/requestctx"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
@@ -100,6 +101,92 @@ func TestHandler_DispatchErrorWithSuccessfulPrimaryReturnsBadGateway(t *testing.
 	}
 }
 
+func TestHandler_ReturnsInvalidRequestWhenAddressingModeDoesNotMatch(t *testing.T) {
+	h := NewHandler(Dependencies{
+		Addressing: config.Addressing{
+			VirtualHosted: true,
+			HostSuffixes:  []string{"s3proxy.example.com"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	req.Host = "localhost:8080"
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rr.Body.String(), "InvalidRequest") {
+		t.Fatalf("body = %q, want InvalidRequest", rr.Body.String())
+	}
+}
+
+func TestHandler_SignatureMismatchReturnsSignatureDoesNotMatch(t *testing.T) {
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{err: auth.AuthError("signature does not match")},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+	if !strings.Contains(rr.Body.String(), "SignatureDoesNotMatch") {
+		t.Fatalf("body = %q, want SignatureDoesNotMatch", rr.Body.String())
+	}
+}
+
+func TestHandler_MultiRouteOversizedBodyReturnsEntityTooLarge(t *testing.T) {
+	h := NewHandler(Dependencies{
+		Addressing:         config.Addressing{PathStyle: true},
+		ReplayBodyMaxBytes: 1,
+		Authenticator:      stubAuthenticator{},
+		Authorizer:         stubAuthorizer{},
+		Router:             stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
+		Rewriter:           stubRewriter{},
+		Dispatcher:         &stubFanout{},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("x"))
+	req.ContentLength = 2
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusRequestEntityTooLarge)
+	}
+	if !strings.Contains(rr.Body.String(), "EntityTooLarge") {
+		t.Fatalf("body = %q, want EntityTooLarge", rr.Body.String())
+	}
+}
+
+func TestHandler_DispatchOversizedBodyReturnsEntityTooLarge(t *testing.T) {
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    &stubFanout{errs: []error{replaybody.ErrBodyTooLarge}, results: []*dispatch.Result{nil}},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("payload"))
+	req.ContentLength = int64(len("payload"))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusRequestEntityTooLarge)
+	}
+	if !strings.Contains(rr.Body.String(), "EntityTooLarge") {
+		t.Fatalf("body = %q, want EntityTooLarge", rr.Body.String())
+	}
+}
+
 func TestWriteS3Response_StripsHopByHopHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
 	writeS3Response(rr, &s3.Response{
@@ -128,9 +215,9 @@ func TestWriteS3Response_StripsHopByHopHeaders(t *testing.T) {
 	}
 }
 
-type stubAuthenticator struct{}
+type stubAuthenticator struct{ err error }
 
-func (stubAuthenticator) Authenticate(*http.Request) (*auth.Principal, error) { return nil, nil }
+func (s stubAuthenticator) Authenticate(*http.Request) (*auth.Principal, error) { return nil, s.err }
 
 type stubAuthorizer struct{}
 

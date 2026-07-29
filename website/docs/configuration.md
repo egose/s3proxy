@@ -31,6 +31,7 @@ Think about the config in seven layers:
 ```hcl
 listener "http" "public" {
   address = ":8080"
+  replay_body_max_bytes = 33554432
 
   addressing {
     path_style     = true
@@ -102,6 +103,7 @@ Important fields:
 
 - `address`
 - `max_header_bytes`
+- `replay_body_max_bytes`
 - `addressing.path_style`
 - `addressing.virtual_hosted`
 - `addressing.host_suffixes`
@@ -115,6 +117,8 @@ Notes:
 - only one `listener` block is supported
 - only `listener "http" ...` is supported in v1
 - enabling `virtual_hosted` requires at least one `host_suffix`
+- `replay_body_max_bytes` caps in-memory buffering when the proxy must replay a request body; `0` uses the default `32 MiB`
+- replay-bound requests fail with `413 EntityTooLarge` when the limit is exceeded
 
 ## Auth
 

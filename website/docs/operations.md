@@ -110,9 +110,11 @@ Important operational behaviors:
 
 - only one listener is supported
 - config changes require a restart; there is no hot reload in v1
-- request bodies for fan-out writes are buffered in memory
+- request bodies that need replay are buffered in memory up to `listener.replay_body_max_bytes`
 - reads use one effective backend even when a route has multiple destinations
 - target `timeout` directly affects failover timing for `ordered_failover`
+
+If the replay limit is exceeded, the proxy returns `413 EntityTooLarge` instead of attempting the upstream request.
 
 ## Logging And Diagnostics
 

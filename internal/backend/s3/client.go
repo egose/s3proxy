@@ -1,7 +1,6 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/s3ops"
 )
 
@@ -33,11 +33,16 @@ type Executor interface {
 }
 
 func NewClient(httpClient *http.Client) Executor {
-	return &client{httpClient: httpClient}
+	return NewClientWithReplayLimit(httpClient, replaybody.DefaultMaxBytes)
+}
+
+func NewClientWithReplayLimit(httpClient *http.Client, replayBodyMaxBytes int64) Executor {
+	return &client{httpClient: httpClient, replayBodyMaxBytes: replayBodyMaxBytes}
 }
 
 type client struct {
-	httpClient *http.Client
+	httpClient         *http.Client
+	replayBodyMaxBytes int64
 }
 
 func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
@@ -52,7 +57,7 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 		return nil, fmt.Errorf("build target URL: %w", err)
 	}
 
-	body, getBody, contentLength, err := prepareSourceBody(req.Source)
+	body, getBody, contentLength, err := c.prepareSourceBody(req.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +104,7 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	}, nil
 }
 
-func prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io.ReadCloser, error), int64, error) {
+func (c *client) prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io.ReadCloser, error), int64, error) {
 	if src == nil || src.Body == nil || src.Body == http.NoBody {
 		return nil, nil, 0, nil
 	}
@@ -107,25 +112,15 @@ func prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io.ReadCloser,
 		return src.Body, nil, src.ContentLength, nil
 	}
 	if src.GetBody == nil {
-		bodyBytes, err := io.ReadAll(src.Body)
-		if err != nil {
-			return nil, nil, 0, fmt.Errorf("read request body: %w", err)
+		if err := replaybody.EnsureWithLimit(src, c.replayBodyMaxBytes); err != nil {
+			return nil, nil, 0, err
 		}
-		installSourceReplayBody(src, bodyBytes)
 	}
 	body, err := src.GetBody()
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("get request body: %w", err)
 	}
 	return body, src.GetBody, src.ContentLength, nil
-}
-
-func installSourceReplayBody(src *http.Request, body []byte) {
-	src.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
-	src.Body = io.NopCloser(bytes.NewReader(body))
-	src.ContentLength = int64(len(body))
 }
 
 func buildTargetURL(target config.S3Target, bucket, key string, src *http.Request) (*url.URL, error) {

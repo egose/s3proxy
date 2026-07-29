@@ -1,3 +1,17 @@
+## Unreleased
+
+### Features
+
+* add configurable replay body limits for multi-route, fan-out, and unknown-length outbound request replay
+
+### Bug Fixes
+
+* enforce listener addressing modes, tighten dispatch=all validation, and return signature-specific auth failures
+
+### Documentation
+
+* document `replay_body_max_bytes` and `413 EntityTooLarge` replay behavior across README and docs
+
 ## 0.0.1 (2026-07-28)
 
 ### Features
