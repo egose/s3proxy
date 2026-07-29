@@ -73,7 +73,7 @@ Multipart-related operations and `CopyObject` return an S3-compatible `NotImplem
 
 - `ListBuckets` is virtual. It returns proxy-defined buckets visible to the authenticated client, not upstream bucket discovery.
 - Reads never fan out in v1. Even when a route has multiple destinations, one effective backend is selected per read.
-- For `dispatch = "all"`, write request bodies are buffered in memory before they are replayed to each destination.
+- For `dispatch = "all"`, write request bodies are buffered in memory before they are replayed to each destination, bounded by `listener.replay_body_max_bytes`.
 - `ordered_failover` only fails over on transport errors, timeouts, and upstream `5xx`. It does not fail over on `404`, `NoSuchKey`, or `NoSuchBucket`.
 - `path_prefix` matching is strict: `RawPath == prefix` or `RawPath` starts with `prefix + "/"`.
 
