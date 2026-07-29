@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +11,7 @@ import (
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/dispatch"
 	"github.com/egose/s3proxy/internal/listbuckets"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/requestctx"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
@@ -22,14 +21,15 @@ import (
 )
 
 type Dependencies struct {
-	Addressing    config.Addressing
-	Authenticator auth.Authenticator
-	Authorizer    auth.Authorizer
-	Router        router.RouteResolver
-	Rewriter      rewrite.Engine
-	Dispatcher    dispatch.Fanout
-	Buckets       listbuckets.Service
-	Logger        *slog.Logger
+	Addressing         config.Addressing
+	ReplayBodyMaxBytes int64
+	Authenticator      auth.Authenticator
+	Authorizer         auth.Authorizer
+	Router             router.RouteResolver
+	Rewriter           rewrite.Engine
+	Dispatcher         dispatch.Fanout
+	Buckets            listbuckets.Service
+	Logger             *slog.Logger
 }
 
 func NewHandler(deps Dependencies) http.Handler {
@@ -65,6 +65,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, err := requestctx.FromRequest(r, h.deps.Addressing)
 	if err != nil {
 		logger.Error("request parse failed", "error", err)
+		if requestctx.IsNoAddressingMatch(err) {
+			xmls3.WriteError(w, http.StatusBadRequest, "InvalidRequest", "The request does not match the enabled listener addressing modes.", requestID)
+			return
+		}
 		xmls3.WriteInternalError(w, requestID)
 		return
 	}
@@ -89,6 +93,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	principal, err := h.deps.Authenticator.Authenticate(r)
 	if err != nil {
 		logger.Warn("auth failed", "error", err)
+		if auth.IsSignatureMismatch(err) {
+			xmls3.WriteSignatureDoesNotMatch(w, requestID)
+			return
+		}
 		xmls3.WriteAccessDenied(w, requestID)
 		return
 	}
@@ -114,8 +122,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(matches) > 1 {
-		if err := ensureReplayableBody(r); err != nil {
+		if err := replaybody.EnsureWithLimit(r, h.deps.ReplayBodyMaxBytes); err != nil {
 			logger.Error("request body read failed", "error", err)
+			if replaybody.IsTooLarge(err) {
+				xmls3.WriteError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Request body is too large for multi-destination replay.", requestID)
+				return
+			}
 			xmls3.WriteBadGateway(w, requestID)
 			return
 		}
@@ -124,7 +136,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var primary *s3.Response
 	for _, match := range matches {
 		if len(matches) > 1 {
-			if err := resetRequestBody(r); err != nil {
+			if err := replaybody.Reset(r); err != nil {
 				logger.Error("request body reset failed", "error", err)
 				xmls3.WriteBadGateway(w, requestID)
 				return
@@ -142,6 +154,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rwResult)
 		if err != nil {
 			matchLogger.Error("dispatch failed", "error", err)
+			if replaybody.IsTooLarge(err) {
+				xmls3.WriteError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Request body is too large for multi-destination replay.", requestID)
+				return
+			}
 			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.StatusCode >= http.StatusBadRequest {
 				writeS3Response(w, dispResult.Primary)
 				return
@@ -204,48 +220,6 @@ func writeS3Response(w http.ResponseWriter, resp *s3.Response) {
 		resp.Body.Close()
 	}
 }
-
-func ensureReplayableBody(r *http.Request) error {
-	if r.Body == nil || r.Body == http.NoBody || r.GetBody != nil {
-		return nil
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return err
-	}
-	installReplayableBody(r, body)
-	return nil
-}
-
-func resetRequestBody(r *http.Request) error {
-	if r.GetBody == nil {
-		if r.Body == nil {
-			r.Body = http.NoBody
-		}
-		return nil
-	}
-	body, err := r.GetBody()
-	if err != nil {
-		return fmt.Errorf("get request body: %w", err)
-	}
-	r.Body = body
-	return nil
-}
-
-func installReplayableBody(r *http.Request, body []byte) {
-	if body == nil {
-		r.Body = http.NoBody
-		r.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
-		r.ContentLength = 0
-		return
-	}
-	r.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	r.ContentLength = int64(len(body))
-}
-
 func isHopByHopHeader(name string, connectionTokens map[string]struct{}) bool {
 	canonical := strings.ToLower(name)
 	switch canonical {

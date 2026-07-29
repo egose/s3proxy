@@ -34,6 +34,9 @@ func validateListener(l Listener) error {
 	if l.MaxHeaderBytes < 0 {
 		return fmt.Errorf("listener.http %q: max_header_bytes must be >= 0", l.Name)
 	}
+	if l.ReplayBodyMaxBytes < 0 {
+		return fmt.Errorf("listener.http %q: replay_body_max_bytes must be >= 0", l.Name)
+	}
 	if l.Timeouts.Read < 0 || l.Timeouts.ReadHeader < 0 || l.Timeouts.Idle < 0 || l.Timeouts.Write < 0 {
 		return fmt.Errorf("listener.http %q: timeouts must be >= 0", l.Name)
 	}
@@ -186,6 +189,9 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 			if op == "CopyObject" {
 				return fmt.Errorf("route %q: operation %q is not implemented", r.Name, op)
 			}
+			if r.Dispatch == DispatchAll && !supportsDispatchAll(op) {
+				return fmt.Errorf("route %q: dispatch %q is only implemented for PutObject and DeleteObject, got %q", r.Name, r.Dispatch, op)
+			}
 		}
 		if r.Dispatch == DispatchAll && r.ReadPreference != ReadFirst {
 			return fmt.Errorf("route %q: read_preference is ignored for dispatch=all", r.Name)
@@ -237,4 +243,13 @@ func routeSupportsContinue(r Route) bool {
 		}
 	}
 	return true
+}
+
+func supportsDispatchAll(op string) bool {
+	switch op {
+	case "PutObject", "DeleteObject":
+		return true
+	default:
+		return false
+	}
 }

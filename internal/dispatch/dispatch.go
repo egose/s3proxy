@@ -1,14 +1,13 @@
 package dispatch
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/egose/s3proxy/internal/backend/s3"
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
 	"github.com/egose/s3proxy/internal/s3ops"
@@ -24,11 +23,16 @@ type Fanout interface {
 }
 
 func New(backend s3.Executor) Fanout {
-	return &dispatcher{backend: backend}
+	return NewWithReplayLimit(backend, replaybody.DefaultMaxBytes)
+}
+
+func NewWithReplayLimit(backend s3.Executor, replayBodyMaxBytes int64) Fanout {
+	return &dispatcher{backend: backend, replayBodyMaxBytes: replayBodyMaxBytes}
 }
 
 type dispatcher struct {
-	backend s3.Executor
+	backend            s3.Executor
+	replayBodyMaxBytes int64
 }
 
 func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http.Request, op s3ops.Operation, rw rewrite.Result) (*Result, error) {
@@ -62,12 +66,12 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 		return result, nil
 	}
 
-	if err := ensureReplayableBody(req); err != nil {
+	if err := replaybody.EnsureWithLimit(req, d.replayBodyMaxBytes); err != nil {
 		return nil, err
 	}
 
 	for i, dest := range match.Destinations {
-		if err := resetRequestBody(req); err != nil {
+		if err := replaybody.Reset(req); err != nil {
 			return nil, err
 		}
 
@@ -144,35 +148,4 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 		return result, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
 	}
 	return nil, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
-}
-
-func ensureReplayableBody(req *http.Request) error {
-	if req.Body == nil || req.Body == http.NoBody || req.GetBody != nil {
-		return nil
-	}
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		return fmt.Errorf("read request body: %w", err)
-	}
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	req.ContentLength = int64(len(body))
-	return nil
-}
-
-func resetRequestBody(req *http.Request) error {
-	if req.GetBody == nil {
-		if req.Body == nil {
-			req.Body = http.NoBody
-		}
-		return nil
-	}
-	body, err := req.GetBody()
-	if err != nil {
-		return fmt.Errorf("get request body: %w", err)
-	}
-	req.Body = body
-	return nil
 }

@@ -74,20 +74,21 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 			ResponseHeaderTimeout: defaultUpstreamResponseHeaderTimeout,
 		},
 	}
-	backend := s3.NewClient(httpClient)
-	dispatcher := dispatch.New(backend)
+	backend := s3.NewClientWithReplayLimit(httpClient, rt.Listener.ReplayBodyMaxBytes)
+	dispatcher := dispatch.NewWithReplayLimit(backend, rt.Listener.ReplayBodyMaxBytes)
 
 	buckets := listbuckets.New(rt.Buckets, time.Now())
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
-		Addressing:    rt.Listener.Addressing,
-		Authenticator: authenticator,
-		Authorizer:    authorizer,
-		Router:        resolver,
-		Rewriter:      rewriter,
-		Dispatcher:    dispatcher,
-		Buckets:       buckets,
-		Logger:        logger,
+		Addressing:         rt.Listener.Addressing,
+		ReplayBodyMaxBytes: rt.Listener.ReplayBodyMaxBytes,
+		Authenticator:      authenticator,
+		Authorizer:         authorizer,
+		Router:             resolver,
+		Rewriter:           rewriter,
+		Dispatcher:         dispatcher,
+		Buckets:            buckets,
+		Logger:             logger,
 	})
 
 	server := &http.Server{
