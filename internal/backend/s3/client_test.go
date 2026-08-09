@@ -189,6 +189,113 @@ func TestClientDo_RespectsTargetTimeout(t *testing.T) {
 	}
 }
 
+func TestClientDo_TargetTimeoutSurvivesUntilResponseBodyEOF(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "cannot flush", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		time.Sleep(20 * time.Millisecond)
+		w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(&http.Client{})
+	resp, err := client.Do(context.Background(), Request{
+		Operation: s3ops.OpGetObject,
+		Target: config.S3Target{
+			Endpoint:       server.URL,
+			EndpointURL:    mustURL(t, server.URL),
+			Region:         "us-east-1",
+			ForcePathStyle: true,
+			Timeout:        200 * time.Millisecond,
+			Credentials: config.StaticCredential{
+				AccessKey: "ak",
+				SecretKey: "sk",
+			},
+		},
+		Bucket: "bucket",
+		Key:    "key",
+		Source: src,
+	})
+	if err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if got, want := string(body), "ok"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestClientDo_TargetTimeoutCancelsSlowResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "cannot flush", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		time.Sleep(80 * time.Millisecond)
+		w.Write([]byte("late"))
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(&http.Client{})
+	resp, err := client.Do(context.Background(), Request{
+		Operation: s3ops.OpGetObject,
+		Target: config.S3Target{
+			Endpoint:       server.URL,
+			EndpointURL:    mustURL(t, server.URL),
+			Region:         "us-east-1",
+			ForcePathStyle: true,
+			Timeout:        20 * time.Millisecond,
+			Credentials: config.StaticCredential{
+				AccessKey: "ak",
+				SecretKey: "sk",
+			},
+		},
+		Bucket: "bucket",
+		Key:    "key",
+		Source: src,
+	})
+	if err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	_, err = io.ReadAll(resp.Body)
+	if err == nil {
+		t.Fatal("expected timeout while reading body")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			if !strings.Contains(err.Error(), "timeout") && !strings.Contains(err.Error(), "deadline exceeded") {
+				t.Fatalf("expected timeout error, got %v", err)
+			}
+		}
+	}
+}
+
 func TestClientDo_StreamsKnownLengthSourceBody(t *testing.T) {
 	var bodies []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -518,5 +625,52 @@ func TestClientDo_DoesNotForwardHopByHopHeaders(t *testing.T) {
 	}
 	if gotTE != "" {
 		t.Fatalf("expected TE to be stripped, got %q", gotTE)
+	}
+}
+
+func TestClientDo_ForwardsAuthenticatedControlHeadersOnly(t *testing.T) {
+	var gotACL string
+	var gotDate string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotACL = r.Header.Get("X-Amz-Acl")
+		gotDate = r.Header.Get("X-Amz-Date")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Header.Set("X-Amz-Acl", "private")
+	src.Header.Set("X-Amz-Date", "20240101T000000Z")
+
+	client := NewClient(&http.Client{})
+	resp, err := client.Do(context.Background(), Request{
+		Operation: s3ops.OpPutObject,
+		Target: config.S3Target{
+			Endpoint:       server.URL,
+			EndpointURL:    mustURL(t, server.URL),
+			Region:         "us-east-1",
+			ForcePathStyle: true,
+			Credentials: config.StaticCredential{
+				AccessKey: "ak",
+				SecretKey: "sk",
+			},
+		},
+		Bucket: "bucket",
+		Key:    "key",
+		Source: src,
+	})
+	if err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	resp.Body.Close()
+
+	if gotACL != "private" {
+		t.Fatalf("X-Amz-Acl = %q, want private", gotACL)
+	}
+	if gotDate == "20240101T000000Z" {
+		t.Fatalf("inbound X-Amz-Date was forwarded")
 	}
 }

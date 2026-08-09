@@ -18,6 +18,18 @@ func TestClassify_ListBuckets(t *testing.T) {
 	}
 }
 
+func TestClassify_RootUnsupportedMethods(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			ctx := &requestctx.Context{Method: method}
+			op, _ := Classify(ctx)
+			if op != OpUnknown {
+				t.Errorf("expected Unknown, got %s", op)
+			}
+		})
+	}
+}
+
 func TestClassify_GetObject(t *testing.T) {
 	ctx := &requestctx.Context{
 		Method: http.MethodGet,

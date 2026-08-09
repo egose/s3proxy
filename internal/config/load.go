@@ -80,13 +80,14 @@ type rawFile struct {
 }
 
 type rawListener struct {
-	Type               string        `hcl:"type,label"`
-	Name               string        `hcl:"name,label"`
-	Address            string        `hcl:"address"`
-	MaxHeaderBytes     int           `hcl:"max_header_bytes,optional"`
-	ReplayBodyMaxBytes int64         `hcl:"replay_body_max_bytes,optional"`
-	Addressing         rawAddressing `hcl:"addressing,block"`
-	Timeouts           *rawTimeouts  `hcl:"timeouts,block"`
+	Type                        string        `hcl:"type,label"`
+	Name                        string        `hcl:"name,label"`
+	Address                     string        `hcl:"address"`
+	MaxHeaderBytes              int           `hcl:"max_header_bytes,optional"`
+	ReplayBodyMaxBytes          int64         `hcl:"replay_body_max_bytes,optional"`
+	ReplayBodyAggregateMaxBytes int64         `hcl:"replay_body_aggregate_max_bytes,optional"`
+	Addressing                  rawAddressing `hcl:"addressing,block"`
+	Timeouts                    *rawTimeouts  `hcl:"timeouts,block"`
 }
 
 type rawAddressing struct {
@@ -186,10 +187,11 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 		return nil, fmt.Errorf("unsupported listener type %q (only \"http\" is supported)", l.Type)
 	}
 	listener := Listener{
-		Name:               l.Name,
-		Address:            l.Address,
-		MaxHeaderBytes:     l.MaxHeaderBytes,
-		ReplayBodyMaxBytes: l.ReplayBodyMaxBytes,
+		Name:                        l.Name,
+		Address:                     l.Address,
+		MaxHeaderBytes:              l.MaxHeaderBytes,
+		ReplayBodyMaxBytes:          l.ReplayBodyMaxBytes,
+		ReplayBodyAggregateMaxBytes: l.ReplayBodyAggregateMaxBytes,
 		Addressing: Addressing{
 			PathStyle:     l.Addressing.PathStyle,
 			VirtualHosted: l.Addressing.VirtualHosted,

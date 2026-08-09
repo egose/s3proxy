@@ -283,7 +283,11 @@ Success policy:
 
 - all destinations must succeed
 - if any destination fails, return failure to the client
+- upstream HTTP failures preserve the primary upstream error response when available
+- transport or replay failures return a proxy-generated failure
 - log per-destination result details
+
+For multi-route writes collected by `on_match = "continue"`, every matched route must also succeed. A failure from any matched route makes the overall request fail, even if an earlier route returned success.
 
 Reads do not fan out in v1.
 

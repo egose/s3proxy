@@ -46,6 +46,7 @@ func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
 
 	if cfg.VirtualHosted && len(cfg.HostSuffixes) > 0 {
 		for _, suffix := range cfg.HostSuffixes {
+			suffix = normalizeHost(suffix)
 			if strings.HasSuffix(ctx.Host, "."+suffix) {
 				bucket := strings.TrimSuffix(ctx.Host, "."+suffix)
 				if bucket != "" {
@@ -56,13 +57,6 @@ func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
 				break
 			}
 		}
-	}
-
-	if ctx.AddressingMode == "" && cfg.PathStyle {
-		ctx.AddressingMode = AddressingPathStyle
-		bucket, key := parsePathStyle(escapedPath)
-		ctx.Bucket = bucket
-		ctx.Key = key
 	}
 
 	if ctx.AddressingMode == "" && cfg.PathStyle {
@@ -94,12 +88,12 @@ func parsePathStyle(path string) (bucket, key string) {
 func normalizeHost(hostport string) string {
 	idx := strings.LastIndex(hostport, ":")
 	if idx == -1 {
-		return hostport
+		return strings.ToLower(strings.TrimSuffix(hostport, "."))
 	}
 	if strings.Count(hostport, ":") > 1 {
-		return hostport
+		return strings.ToLower(strings.TrimSuffix(hostport, "."))
 	}
-	return hostport[:idx]
+	return strings.ToLower(strings.TrimSuffix(hostport[:idx], "."))
 }
 
 func requestEscapedPath(r *http.Request) string {

@@ -93,6 +93,7 @@ Please check the [asdf documentation](https://github.com/asdf-vm/asdf) for more 
 listener "http" "public" {
   address = ":8080"
   replay_body_max_bytes = 33554432
+  replay_body_aggregate_max_bytes = 268435456
 
   addressing {
     path_style     = true
@@ -172,7 +173,7 @@ bucket "images" {
 }
 ```
 
-`replay_body_max_bytes` limits how much request body the proxy will buffer in memory when it needs a replayable body, such as `dispatch = "all"`, `on_match = "continue"`, or unknown-length outbound uploads. `0` uses the built-in default of `33554432` bytes (`32 MiB`). Oversized replay attempts fail with `413 EntityTooLarge`.
+`replay_body_max_bytes` limits how much request body the proxy will buffer per request when it needs a replayable body, such as `dispatch = "all"`, `on_match = "continue"`, authenticated payload-hash verification, or unknown-length outbound uploads. `0` uses the built-in default of `33554432` bytes (`32 MiB`). Oversized replay attempts fail with `413 EntityTooLarge`. `replay_body_aggregate_max_bytes` limits retained replay buffers across the process; `0` uses the built-in default of `268435456` bytes (`256 MiB`). Aggregate exhaustion fails immediately with `503 SlowDown` instead of blocking request goroutines.
 
 ## CLI
 
@@ -251,7 +252,10 @@ values into the config file.
 - For multi-destination routes, `read_preference` controls which destination
   is used for reads (`first` by default).
 - For multi-destination writes with `dispatch = "all"`, all destinations must
-  succeed; any failure returns a 502 to the client.
+  succeed. Upstream HTTP failures return the primary upstream error response;
+  transport or replay failures return a proxy error.
+- For multi-route writes with `on_match = "continue"`, every matched route must
+  succeed; a later route failure cannot be hidden by an earlier success.
 - `ordered_failover` only fails over on transport errors, timeouts, and
   upstream `5xx`. It does not fail over on `404` / `NoSuchKey` /
   `NoSuchBucket` responses.
@@ -259,9 +263,11 @@ values into the config file.
   `ordered_failover`, this directly bounds how long the proxy waits before
   failing over from a slow or unreachable backend.
 - `ListBuckets` returns proxy-defined virtual buckets, not upstream discovery.
-- Request body replay for multi-destination writes, multi-route writes, and
-  unknown-length outbound uploads is bounded by `listener.replay_body_max_bytes`
-  and fails with `413 EntityTooLarge` when exceeded.
+- Request body replay for multi-destination writes, multi-route writes, payload-hash
+  verification, and unknown-length outbound uploads is bounded per request by
+  `listener.replay_body_max_bytes` and across the process by
+  `listener.replay_body_aggregate_max_bytes`. Per-request overflow fails with
+  `413 EntityTooLarge`; aggregate exhaustion fails with `503 SlowDown`.
 
 ## Deferred / Planned
 

@@ -29,6 +29,27 @@ func TestApply_StripPathPrefix(t *testing.T) {
 	}
 }
 
+func TestApply_StripPathPrefixRequiresBoundary(t *testing.T) {
+	e := New()
+	ctx := &requestctx.Context{
+		RawPath: "/images-old/path/to/file.jpg",
+		Bucket:  "images-old",
+		Key:     "path/to/file.jpg",
+	}
+	route := config.Route{
+		Rewrite: config.RewriteRule{
+			StripPathPrefix: "/images",
+		},
+	}
+	result, err := e.Apply(ctx, route, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.Key, "path/to/file.jpg"; got != want {
+		t.Fatalf("Key = %q, want %q", got, want)
+	}
+}
+
 func TestApply_PrependKeyPrefix(t *testing.T) {
 	e := New()
 	ctx := &requestctx.Context{

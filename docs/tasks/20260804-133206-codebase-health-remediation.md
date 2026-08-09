@@ -66,7 +66,7 @@ Recommended agent allocation:
 
 ### Task STREAM-01: Preserve Target Timeout Through Response Streaming
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P0
 
@@ -105,9 +105,16 @@ Acceptance criteria:
 - A body returning data followed by a sentinel error is closed and the error is observable in a handler test/log assertion.
 - `go test ./internal/backend/s3 ./internal/httpapi` passes.
 
+Completion evidence 2026-08-09:
+
+- Added backend regression coverage for header-flushed responses that continue streaming after `Do` returns and for body reads that exceed the target timeout.
+- Added handler coverage proving response body copy errors are logged and the body is closed.
+- `go test ./internal/backend/s3 ./internal/httpapi`: passed.
+- `make vet test`: passed.
+
 ### Task AUTH-01: Enforce The Authenticated Request Boundary
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P0
 
@@ -154,11 +161,18 @@ Acceptance criteria:
 - Exact skew and presign-expiry boundaries are deterministic in tests.
 - `go test ./internal/auth ./internal/backend/s3` passes.
 
+Completion evidence 2026-08-09:
+
+- Added authenticated-header filtering after successful verification, preserving signed headers and unsigned `Range` while stripping unsigned S3 control headers before backend dispatch.
+- Tightened header and presigned credential scope/date validation and added a private verifier clock seam for deterministic skew/expiry tests.
+- Added explicit SHA-256 payload-hash verification for header and presigned requests through the replay-body boundary.
+- `go test ./internal/auth ./internal/backend/s3`: passed.
+
 ## Wave 2: Routing And Configuration Correctness
 
 ### Task ROUTE-01: Correct Multi-Route And Root Operation Semantics
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P0
 
@@ -201,9 +215,18 @@ Acceptance criteria:
 - A principal excluding `ListBuckets` receives `AccessDenied`; wildcard/default semantics remain tested.
 - `go test ./internal/httpapi ./internal/s3ops ./internal/auth` passes.
 
+Completion evidence 2026-08-09:
+
+- Added multi-route write regressions for `200, 403` responses and later dispatch failure closing the earlier retained response.
+- Classified only `GET /` as `ListBuckets`; root `POST`, `PUT`, and `DELETE` now classify as unsupported.
+- Added `AllowOperation` authorization for `ListBuckets` and covered denied, wildcard, and default operation semantics.
+- Aligned README, design docs, and website docs for multi-destination and multi-route write failure behavior.
+- `go test ./internal/httpapi ./internal/s3ops ./internal/auth`: passed.
+- `make vet test`: passed.
+
 ### Task HTTP-01: Make Addressing And Prefix Boundaries Consistent
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P1
 
@@ -245,9 +268,17 @@ Acceptance criteria:
 - Mixed addressing mode precedence and escaped-key tests pass.
 - `go test ./internal/requestctx ./internal/rewrite ./internal/router` passes.
 
+Completion evidence 2026-08-09:
+
+- Normalized virtual-hosted request hosts and configured suffixes to lowercase without one trailing dot before comparison; extracted virtual-hosted bucket names follow that normalized lowercase contract.
+- Removed the duplicate path-style fallback while preserving virtual-hosted precedence over path-style addressing.
+- Made `strip_path_prefix` observe the same exact-or-slash boundary as path-prefix routing while preserving escaped path bytes.
+- `go test ./internal/requestctx ./internal/rewrite ./internal/router`: passed.
+- `make vet test`: passed.
+
 ### Task CONFIG-01: Validate Authorization And Bucket References
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P1
 
@@ -286,11 +317,18 @@ Acceptance criteria:
 - Existing valid examples continue to load.
 - `go test ./internal/config` passes.
 
+Completion evidence 2026-08-09:
+
+- Added table-driven config load coverage for duplicate bucket labels, unknown `allow_routes`, invalid `allow_ops`, unknown `visible_buckets`, and duplicate auth policy entries; wildcard policy references remain accepted.
+- Moved auth policy reference validation after route and virtual-bucket validation so route and visible-bucket names are known before checking clients.
+- `go test ./internal/config`: passed.
+- `make vet test`: passed.
+
 ## Wave 3: Resource Ownership And Exhaustion
 
 ### Task RESOURCE-01: Close And Reuse Every Upstream Response Correctly
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P1
 
@@ -328,6 +366,15 @@ Acceptance criteria:
 - Connection-state or `httptrace` tests demonstrate reuse for repeated small discarded responses.
 - Oversized error-body draining is bounded.
 - `go test ./internal/dispatch ./internal/httpapi` and `make test-race` pass.
+
+Completion evidence 2026-08-09:
+
+- Added shared bounded drain-and-close response cleanup and used it for discarded dispatch and handler responses.
+- Added close/drain regressions for fan-out partial failure, extra fan-out responses, ordered-failover `5xx -> 200`, bounded oversized discarded bodies, and retained multi-route primary cleanup on reset, rewrite, and dispatch failures.
+- Added a connection-state regression demonstrating repeated small discarded upstream responses reuse the initial HTTP connections.
+- `go test ./internal/dispatch ./internal/httpapi`: passed.
+- `make test-race`: passed.
+- `make vet test`: passed.
 
 ### Task RESOURCE-02: Bound Aggregate Replay Memory And Clarify Body Ownership
 

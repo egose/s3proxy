@@ -17,12 +17,13 @@ type Runtime struct {
 }
 
 type Listener struct {
-	Name               string
-	Address            string
-	Addressing         Addressing
-	MaxHeaderBytes     int
-	ReplayBodyMaxBytes int64
-	Timeouts           Timeouts
+	Name                        string
+	Address                     string
+	Addressing                  Addressing
+	MaxHeaderBytes              int
+	ReplayBodyMaxBytes          int64
+	ReplayBodyAggregateMaxBytes int64
+	Timeouts                    Timeouts
 }
 
 type Addressing struct {

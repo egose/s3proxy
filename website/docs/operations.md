@@ -110,11 +110,11 @@ Important operational behaviors:
 
 - only one listener is supported
 - config changes require a restart; there is no hot reload in v1
-- request bodies that need replay are buffered in memory up to `listener.replay_body_max_bytes`
+- request bodies that need replay are buffered in memory up to `listener.replay_body_max_bytes` per request and `listener.replay_body_aggregate_max_bytes` across the process
 - reads use one effective backend even when a route has multiple destinations
 - target `timeout` directly affects failover timing for `ordered_failover`
 
-If the replay limit is exceeded, the proxy returns `413 EntityTooLarge` instead of attempting the upstream request.
+If the per-request replay limit is exceeded, the proxy returns `413 EntityTooLarge` instead of attempting the upstream request. If the process aggregate replay budget is exhausted, the proxy returns `503 SlowDown` immediately instead of blocking request goroutines.
 
 ## Logging And Diagnostics
 

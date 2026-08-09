@@ -25,6 +25,9 @@ const (
 
 func Classify(ctx *requestctx.Context) (Operation, error) {
 	if ctx.Bucket == "" {
+		if ctx.Method != http.MethodGet {
+			return OpUnknown, nil
+		}
 		return OpListBuckets, nil
 	}
 

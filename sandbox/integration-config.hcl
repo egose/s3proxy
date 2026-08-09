@@ -1,6 +1,7 @@
 listener "http" "public" {
   address = ":8082"
   replay_body_max_bytes = 33554432
+  replay_body_aggregate_max_bytes = 268435456
 
   addressing {
     path_style     = true

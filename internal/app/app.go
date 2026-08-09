@@ -15,6 +15,7 @@ import (
 	"github.com/egose/s3proxy/internal/dispatch"
 	"github.com/egose/s3proxy/internal/httpapi"
 	"github.com/egose/s3proxy/internal/listbuckets"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
 )
@@ -50,7 +51,9 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	}
 	logger.Info("config loaded", "routes", len(rt.Routes), "targets", len(rt.Targets), "auth_mode", rt.Auth.Mode)
 
-	authenticator, err := auth.NewAuthenticator(rt.Auth)
+	replayBudget := replaybody.NewBudget(rt.Listener.ReplayBodyMaxBytes, rt.Listener.ReplayBodyAggregateMaxBytes)
+
+	authenticator, err := auth.NewAuthenticatorWithReplayBudget(rt.Auth, replayBudget)
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
@@ -74,14 +77,15 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 			ResponseHeaderTimeout: defaultUpstreamResponseHeaderTimeout,
 		},
 	}
-	backend := s3.NewClientWithReplayLimit(httpClient, rt.Listener.ReplayBodyMaxBytes)
-	dispatcher := dispatch.NewWithReplayLimit(backend, rt.Listener.ReplayBodyMaxBytes)
+	backend := s3.NewClientWithReplayBudget(httpClient, replayBudget)
+	dispatcher := dispatch.NewWithReplayBudget(backend, replayBudget)
 
 	buckets := listbuckets.New(rt.Buckets, time.Now())
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Addressing:         rt.Listener.Addressing,
 		ReplayBodyMaxBytes: rt.Listener.ReplayBodyMaxBytes,
+		ReplayBudget:       replayBudget,
 		Authenticator:      authenticator,
 		Authorizer:         authorizer,
 		Router:             resolver,

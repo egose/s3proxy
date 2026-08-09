@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/egose/s3proxy/internal/backend/s3"
@@ -66,9 +69,10 @@ func TestDispatch_FanoutRejectsOversizedBody(t *testing.T) {
 }
 
 func TestDispatch_FanoutReplicaFailureClearsSuccessfulPrimary(t *testing.T) {
+	primaryBody := &trackingReadCloser{Reader: strings.NewReader("ok")}
 	backend := &stubBackend{
 		responses: []stubCall{
-			{resp: responseWithStatus(http.StatusOK)},
+			{resp: responseWithStatusAndBody(http.StatusOK, primaryBody)},
 			{err: errors.New("replica write failed")},
 		},
 	}
@@ -95,6 +99,71 @@ func TestDispatch_FanoutReplicaFailureClearsSuccessfulPrimary(t *testing.T) {
 	if result.Primary != nil {
 		t.Fatalf("expected primary response to be cleared on partial failure, got %#v", result.Primary)
 	}
+	if !primaryBody.closed {
+		t.Fatal("expected successful primary body to be closed on partial failure")
+	}
+}
+
+func TestDispatch_FanoutDrainsAndClosesExtraResponses(t *testing.T) {
+	replicaBody := &trackingReadCloser{Reader: strings.NewReader("replica")}
+	backend := &stubBackend{
+		responses: []stubCall{
+			{resp: responseWithStatus(http.StatusOK)},
+			{resp: responseWithStatusAndBody(http.StatusOK, replicaBody)},
+		},
+	}
+	d := &dispatcher{backend: backend}
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = int64(len("payload"))
+
+	result, err := d.Dispatch(context.Background(), router.Match{
+		Route:        config.Route{Dispatch: config.DispatchAll, DestinationRefs: []string{"primary", "replica"}},
+		Destinations: []config.S3Target{{Name: "primary"}, {Name: "replica"}},
+	}, req, s3ops.OpPutObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+	if err != nil {
+		t.Fatalf("Dispatch error = %v", err)
+	}
+	if !replicaBody.closed {
+		t.Fatal("expected replica response body to be closed")
+	}
+	if got := replicaBody.Reader.(*strings.Reader).Len(); got != 0 {
+		t.Fatalf("replica body remaining = %d, want drained", got)
+	}
+	s3.DrainAndClose(result.Primary)
+}
+
+func TestDispatch_DiscardDrainIsBounded(t *testing.T) {
+	body := &trackingReadCloser{Reader: strings.NewReader(strings.Repeat("x", 2<<20))}
+	backend := &stubBackend{
+		responses: []stubCall{
+			{resp: responseWithStatus(http.StatusOK)},
+			{resp: responseWithStatusAndBody(http.StatusOK, body)},
+		},
+	}
+	d := &dispatcher{backend: backend}
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = int64(len("payload"))
+
+	result, err := d.Dispatch(context.Background(), router.Match{
+		Route:        config.Route{Dispatch: config.DispatchAll, DestinationRefs: []string{"primary", "replica"}},
+		Destinations: []config.S3Target{{Name: "primary"}, {Name: "replica"}},
+	}, req, s3ops.OpPutObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+	if err != nil {
+		t.Fatalf("Dispatch error = %v", err)
+	}
+	if !body.closed {
+		t.Fatal("expected oversized discarded body to be closed")
+	}
+	if got := body.Reader.(*strings.Reader).Len(); got == 0 {
+		t.Fatal("expected discarded body drain to be bounded")
+	}
+	s3.DrainAndClose(result.Primary)
 }
 
 func TestDispatch_FanoutPrimaryFailurePreservesPrimaryError(t *testing.T) {
@@ -157,9 +226,10 @@ func TestDispatch_OrderedFailoverRetriesTransportError(t *testing.T) {
 }
 
 func TestDispatch_OrderedFailoverRetriesUpstream5xx(t *testing.T) {
+	failedBody := &trackingReadCloser{Reader: strings.NewReader("bad gateway")}
 	backend := &stubBackend{
 		responses: []stubCall{
-			{resp: responseWithStatus(http.StatusBadGateway)},
+			{resp: responseWithStatusAndBody(http.StatusBadGateway, failedBody)},
 			{resp: responseWithStatus(http.StatusOK)},
 		},
 	}
@@ -179,7 +249,52 @@ func TestDispatch_OrderedFailoverRetriesUpstream5xx(t *testing.T) {
 	if _, ok := result.Errors["primary"]; !ok {
 		t.Fatalf("expected 5xx recorded for first destination, got %#v", result.Errors)
 	}
+	if !failedBody.closed {
+		t.Fatal("expected failed failover response body to be closed before retry")
+	}
+	if got := failedBody.Reader.(*strings.Reader).Len(); got != 0 {
+		t.Fatalf("failed body remaining = %d, want drained", got)
+	}
 	result.Primary.Body.Close()
+}
+
+func TestDispatch_DiscardedResponsesReuseConnections(t *testing.T) {
+	var conns atomic.Int64
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("small discarded body"))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	server.Start()
+	defer server.Close()
+
+	backend := httpBackend{client: server.Client(), url: server.URL}
+	d := &dispatcher{backend: backend}
+	for i := 0; i < 3; i++ {
+		req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.ContentLength = int64(len("payload"))
+		result, err := d.Dispatch(context.Background(), router.Match{
+			Route:        config.Route{Dispatch: config.DispatchAll, DestinationRefs: []string{"primary", "replica"}},
+			Destinations: []config.S3Target{{Name: "primary"}, {Name: "replica"}},
+		}, req, s3ops.OpPutObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+		if err != nil {
+			t.Fatalf("Dispatch error = %v", err)
+		}
+		if _, err := io.Copy(io.Discard, result.Primary.Body); err != nil {
+			t.Fatal(err)
+		}
+		result.Primary.Body.Close()
+	}
+	if got := conns.Load(); got > 2 {
+		t.Fatalf("connections = %d, want discarded responses to reuse the initial connections", got)
+	}
 }
 
 func TestDispatch_OrderedFailoverDoesNotRetry404(t *testing.T) {
@@ -251,11 +366,42 @@ func orderedFailoverMatch() router.Match {
 }
 
 func responseWithStatus(status int) *s3.Response {
+	return responseWithStatusAndBody(status, io.NopCloser(strings.NewReader("body")))
+}
+
+func responseWithStatusAndBody(status int, body io.ReadCloser) *s3.Response {
 	return &s3.Response{
 		StatusCode: status,
 		Header:     http.Header{},
-		Body:       io.NopCloser(strings.NewReader("body")),
+		Body:       body,
 	}
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+type httpBackend struct {
+	client *http.Client
+	url    string
+}
+
+func (b httpBackend) Do(ctx context.Context, req s3.Request) (*s3.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, b.url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := b.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	return &s3.Response{StatusCode: resp.StatusCode, Header: resp.Header, Body: resp.Body}, nil
 }
 
 type stubBackend struct {

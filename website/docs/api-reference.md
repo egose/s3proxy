@@ -95,10 +95,13 @@ For `dispatch = "all"`:
 
 - `PutObject` is supported
 - `DeleteObject` is supported
-- the request body is buffered in memory so it can be replayed, bounded by `listener.replay_body_max_bytes`
+- the request body is buffered in memory so it can be replayed, bounded by `listener.replay_body_max_bytes` per request and `listener.replay_body_aggregate_max_bytes` across the process
 - if any destination fails, the request fails overall
-- the client receives the primary upstream response body on failure
-- oversized replay attempts fail with `413 EntityTooLarge`
+- upstream HTTP failures preserve the primary upstream error response when available
+- transport or replay failures return a proxy-generated failure
+- oversized replay attempts fail with `413 EntityTooLarge`; aggregate replay-budget exhaustion fails with `503 SlowDown`
+
+For writes matched by multiple routes through `on_match = "continue"`, every matched route must also succeed. A later route failure is returned as failure rather than hiding behind an earlier success.
 
 ## Outbound Signing
 
@@ -116,3 +119,4 @@ Representative error rules:
 - route misses return standard S3-compatible error responses
 - upstream backend failures propagate as proxy-mediated S3 responses
 - multi-destination write failures are surfaced as failures, not partial success
+- multi-route write failures are surfaced as failures, not partial success
