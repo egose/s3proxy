@@ -291,7 +291,7 @@ bucket "images" {
 }
 ```
 
-`visible_name` is what the client sees. `route` decides how requests for that bucket are handled.
+`visible_name` is what the client sees in virtual `ListBuckets` responses. `route` links that listed bucket to an existing route for policy validation; it does not create an additional request route by itself.
 
 ## Environment Variables
 

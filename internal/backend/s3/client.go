@@ -92,8 +92,9 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	}
 	outReq.Host = targetURL.Host
 
+	connectionTokens := connectionHeaderTokens(req.Source.Header)
 	for key, vals := range req.Source.Header {
-		if !shouldForwardHeader(key, req.Source.Header) {
+		if !shouldForwardHeader(key, connectionTokens) {
 			continue
 		}
 		for _, v := range vals {
@@ -274,10 +275,14 @@ func canonicalizeEscapedPath(value string) string {
 			b.WriteByte(c)
 			continue
 		}
-		b.WriteString(fmt.Sprintf("%%%02X", c))
+		b.WriteByte('%')
+		b.WriteByte(upperHex[c>>4])
+		b.WriteByte(upperHex[c&0x0f])
 	}
 	return b.String()
 }
+
+const upperHex = "0123456789ABCDEF"
 
 func isSafePathByte(c byte) bool {
 	if c == '/' || c == '-' || c == '_' || c == '.' || c == '~' {
@@ -299,8 +304,8 @@ func isHex(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-func shouldForwardHeader(name string, headers http.Header) bool {
-	if isHopByHopHeader(name, headers) {
+func shouldForwardHeader(name string, connectionTokens map[string]struct{}) bool {
+	if isHopByHopHeader(name, connectionTokens) {
 		return false
 	}
 	switch strings.ToLower(name) {
@@ -314,14 +319,14 @@ func shouldForwardHeader(name string, headers http.Header) bool {
 	}
 }
 
-func isHopByHopHeader(name string, headers http.Header) bool {
+func isHopByHopHeader(name string, connectionTokens map[string]struct{}) bool {
 	canonical := strings.ToLower(name)
 	switch canonical {
 	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 		"te", "trailer", "transfer-encoding", "upgrade":
 		return true
 	}
-	_, ok := connectionHeaderTokens(headers)[canonical]
+	_, ok := connectionTokens[canonical]
 	return ok
 }
 

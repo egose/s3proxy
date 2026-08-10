@@ -15,7 +15,7 @@ type Result struct {
 }
 
 type Engine interface {
-	Apply(ctx *requestctx.Context, route config.Route, captures map[string]string) (Result, error)
+	Apply(ctx *requestctx.Context, rule config.RewriteRule, captures map[string]string) (Result, error)
 }
 
 func New() Engine {
@@ -30,10 +30,9 @@ type templateData struct {
 	Captures map[string]string
 }
 
-func (e *engine) Apply(ctx *requestctx.Context, route config.Route, captures map[string]string) (Result, error) {
+func (e *engine) Apply(ctx *requestctx.Context, rw config.RewriteRule, captures map[string]string) (Result, error) {
 	bucket := ctx.Bucket
 	key := ctx.Key
-	rw := route.Rewrite
 
 	if rw.StripPathPrefix != "" && pathPrefixMatches(ctx.RawPath, rw.StripPathPrefix) {
 		remaining := strings.TrimPrefix(ctx.RawPath, rw.StripPathPrefix)

@@ -6,21 +6,22 @@ import (
 	"strings"
 
 	"github.com/egose/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/s3op"
 )
 
-type Operation string
+type Operation = s3op.Operation
 
 const (
-	OpGetObject     Operation = "GetObject"
-	OpHeadObject    Operation = "HeadObject"
-	OpPutObject     Operation = "PutObject"
-	OpDeleteObject  Operation = "DeleteObject"
-	OpHeadBucket    Operation = "HeadBucket"
-	OpListObjectsV2 Operation = "ListObjectsV2"
-	OpListObjectsV1 Operation = "ListObjectsV1"
-	OpListBuckets   Operation = "ListBuckets"
-	OpCopyObject    Operation = "CopyObject"
-	OpUnknown       Operation = "Unknown"
+	OpGetObject     = s3op.GetObject
+	OpHeadObject    = s3op.HeadObject
+	OpPutObject     = s3op.PutObject
+	OpDeleteObject  = s3op.DeleteObject
+	OpHeadBucket    = s3op.HeadBucket
+	OpListObjectsV2 = s3op.ListObjectsV2
+	OpListObjectsV1 = s3op.ListObjectsV1
+	OpListBuckets   = s3op.ListBuckets
+	OpCopyObject    = s3op.CopyObject
+	OpUnknown       = s3op.Unknown
 )
 
 func Classify(ctx *requestctx.Context) (Operation, error) {
@@ -84,27 +85,23 @@ func IsMultipart(r *http.Request) bool {
 }
 
 func IsRead(op Operation) bool {
-	switch op {
-	case OpGetObject, OpHeadObject, OpListObjectsV2, OpListObjectsV1, OpListBuckets, OpHeadBucket:
-		return true
-	}
-	return false
+	return s3op.IsRead(op)
 }
 
 func IsWrite(op Operation) bool {
-	switch op {
-	case OpPutObject, OpDeleteObject, OpCopyObject:
-		return true
-	}
-	return false
+	return s3op.IsWrite(op)
 }
 
 func SupportsFanout(op Operation) bool {
-	switch op {
-	case OpPutObject, OpDeleteObject:
-		return true
-	}
-	return false
+	return s3op.SupportsFanout(op)
+}
+
+func IsConfigurable(op string) bool {
+	return s3op.IsConfigurable(op)
+}
+
+func ConfigurableOperations() []Operation {
+	return s3op.ConfigurableOperations()
 }
 
 func ParseInt(s string) int {

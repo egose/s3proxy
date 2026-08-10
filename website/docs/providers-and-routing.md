@@ -85,6 +85,7 @@ In v1:
 - if any destination fails during a fan-out write, the request fails
 - upstream HTTP failures preserve the primary upstream error response when available
 - transport or replay failures return a proxy-generated failure
+- fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back
 
 ## Read Preference
 

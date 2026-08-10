@@ -1,11 +1,12 @@
 listener "http" "public" {
   address = ":8082"
-  replay_body_max_bytes = 33554432
+  replay_body_max_bytes = 64
   replay_body_aggregate_max_bytes = 268435456
 
   addressing {
     path_style     = true
-    virtual_hosted = false
+    virtual_hosted = true
+    host_suffixes  = ["s3proxy.test"]
   }
 }
 
@@ -33,6 +34,11 @@ credential "static" "replica" {
   secret_key = env("S3PROXY_TARGET_REPLICA_SECRET_KEY")
 }
 
+credential "static" "forbidden" {
+  access_key = "forbidden-ak"
+  secret_key = "forbidden-sk" // pragma: allowlist secret
+}
+
 target "s3" "primary" {
   endpoint         = "http://localhost:9000"
   region           = "us-east-1"
@@ -52,6 +58,20 @@ target "s3" "missing" {
   region           = "us-east-1"
   force_path_style = true
   timeout          = "250ms"
+  credentials      = "primary"
+}
+
+target "s3" "forbidden" {
+  endpoint         = "http://localhost:9000"
+  region           = "us-east-1"
+  force_path_style = true
+  credentials      = "forbidden"
+}
+
+target "s3" "error500" {
+  endpoint         = "http://localhost:18081"
+  region           = "us-east-1"
+  force_path_style = true
   credentials      = "primary"
 }
 
@@ -138,6 +158,42 @@ route "replica_failover_read" {
   }
 }
 
+parser "path_prefix" "failover_500_prefix" {
+  prefix = "/failover5xx"
+}
+
+route "failover_after_5xx" {
+  parser          = "failover_500_prefix"
+  operations      = ["GetObject", "HeadObject"]
+  destinations    = ["error500", "replica"]
+  dispatch        = "first"
+  on_match        = "stop"
+  read_preference = "ordered_failover"
+
+  rewrite {
+    strip_path_prefix = "/failover5xx"
+    bucket            = "testbucket"
+  }
+}
+
+parser "path_prefix" "failover_404_prefix" {
+  prefix = "/failover404"
+}
+
+route "failover_stops_on_404" {
+  parser          = "failover_404_prefix"
+  operations      = ["GetObject", "HeadObject"]
+  destinations    = ["primary", "replica"]
+  dispatch        = "first"
+  on_match        = "stop"
+  read_preference = "ordered_failover"
+
+  rewrite {
+    strip_path_prefix = "/failover404"
+    bucket            = "testbucket"
+  }
+}
+
 parser "path_prefix" "compose_prefix" {
   prefix = "/compose"
 }
@@ -168,6 +224,95 @@ route "compose_replica" {
   }
 }
 
+parser "bucket_exact" "virtual_bucket" {
+  bucket = "virtual-bucket"
+}
+
+route "virtual_hosted_primary" {
+  parser          = "virtual_bucket"
+  operations      = ["GetObject", "HeadObject", "PutObject", "DeleteObject"]
+  destinations    = ["primary"]
+  dispatch        = "first"
+  on_match        = "stop"
+  read_preference = "first"
+
+  rewrite {
+    bucket = "testbucket"
+  }
+}
+
+parser "bucket_regex" "tenant_logs" {
+  pattern = "^tenant-(?P<tenant>[a-z0-9-]+)-logs$"
+}
+
+route "tenant_log_rewrite" {
+  parser          = "tenant_logs"
+  operations      = ["GetObject", "HeadObject", "PutObject", "DeleteObject"]
+  destinations    = ["primary"]
+  dispatch        = "first"
+  on_match        = "stop"
+  read_preference = "first"
+
+  rewrite {
+    bucket       = "testbucket"
+    key_template = "{{ .Captures.tenant }}/{{ .Key }}"
+  }
+}
+
+parser "path_prefix" "fanout_primary_http_fail_prefix" {
+  prefix = "/fanout-primary-http-fail"
+}
+
+route "fanout_primary_http_fail" {
+  parser          = "fanout_primary_http_fail_prefix"
+  operations      = ["PutObject", "DeleteObject"]
+  destinations    = ["forbidden", "primary"]
+  dispatch        = "all"
+  on_match        = "stop"
+  read_preference = "first"
+
+  rewrite {
+    strip_path_prefix = "/fanout-primary-http-fail"
+    bucket            = "testbucket"
+  }
+}
+
+parser "path_prefix" "fanout_replica_http_fail_prefix" {
+  prefix = "/fanout-replica-http-fail"
+}
+
+route "fanout_replica_http_fail" {
+  parser          = "fanout_replica_http_fail_prefix"
+  operations      = ["PutObject", "DeleteObject"]
+  destinations    = ["primary", "forbidden"]
+  dispatch        = "all"
+  on_match        = "stop"
+  read_preference = "first"
+
+  rewrite {
+    strip_path_prefix = "/fanout-replica-http-fail"
+    bucket            = "testbucket"
+  }
+}
+
+parser "path_prefix" "fanout_transport_fail_prefix" {
+  prefix = "/fanout-transport-fail"
+}
+
+route "fanout_transport_fail" {
+  parser          = "fanout_transport_fail_prefix"
+  operations      = ["PutObject", "DeleteObject"]
+  destinations    = ["primary", "missing"]
+  dispatch        = "all"
+  on_match        = "stop"
+  read_preference = "first"
+
+  rewrite {
+    strip_path_prefix = "/fanout-transport-fail"
+    bucket            = "testbucket"
+  }
+}
+
 // Virtual buckets exposed to authenticated clients via ListBuckets.
 
 bucket "primary_visible" {
@@ -193,4 +338,9 @@ bucket "failover_visible" {
 bucket "compose_visible" {
   visible_name = "compose-bucket"
   route        = "compose_primary"
+}
+
+bucket "virtual_hosted_visible" {
+  visible_name = "virtual-bucket"
+  route        = "virtual_hosted_primary"
 }

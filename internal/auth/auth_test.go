@@ -723,28 +723,3 @@ func TestAuthorizer_NilPrincipal(t *testing.T) {
 		t.Error("expected nil principal to be allowed (none mode)")
 	}
 }
-
-func TestAuthorizer_BucketVisibility(t *testing.T) {
-	az := NewAuthorizer(config.Auth{})
-	p := &Principal{
-		Name:           "ci",
-		VisibleBuckets: []string{"images", "logs"},
-	}
-	if !az.AllowBucketVisibility(p, "images") {
-		t.Error("expected bucket 'images' to be visible")
-	}
-	if az.AllowBucketVisibility(p, "secret") {
-		t.Error("expected bucket 'secret' to be denied")
-	}
-}
-
-func TestAuthorizer_WildcardBucket(t *testing.T) {
-	az := NewAuthorizer(config.Auth{})
-	p := &Principal{
-		Name:           "admin",
-		VisibleBuckets: []string{"*"},
-	}
-	if !az.AllowBucketVisibility(p, "anything") {
-		t.Error("expected wildcard bucket visibility")
-	}
-}

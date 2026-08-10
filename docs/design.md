@@ -138,13 +138,15 @@ Inbound client credentials and destination backend credentials are fully separat
 
 ### Deferred Auth Features
 
-The following are deferred to a later phase:
+The following are deferred to a later phase because v1 keeps credential management static and configuration-owned:
 
 - credential generation
 - credential rotation
 - credential revocation
 - admin API
 - DB-backed client store
+
+Residual risk: static credentials must be rotated and revoked outside the proxy until a DB-backed control plane exists. Deployments that require self-service credential lifecycle should not expose v1 as the credential authority.
 
 ## Routing Model
 
@@ -607,7 +609,9 @@ internal/xmls3/
   - `HeadBucket`
   - `ListObjectsV2`
 - virtual `ListBuckets`
-- logs, health, readiness, basic metrics
+- logs, health, readiness
+
+`/healthz` and `/readyz` are local process endpoints. `/readyz` reports startup readiness only: if the listener is serving requests, it returns `200 OK`; it does not poll configured backends or infer destination health.
 
 ### Milestone 2
 
@@ -615,7 +619,7 @@ internal/xmls3/
   - `PutObject`
   - `DeleteObject`
 - stronger failure handling
-- more metrics and logging detail
+- more logging detail
 - more integration tests
 
 ### Later Phase
@@ -759,4 +763,4 @@ The chosen design limits `ordered_failover` to transport errors, timeouts, and u
 - reads always use one effective backend in v1
 - `ordered_failover` only retries on transport errors, timeouts, and `5xx`
 - multipart is deferred and returns S3-compatible `NotImplemented`
-- credential generation is deferred to a later DB-backed phase
+- credential generation is deferred to a later DB-backed phase, with credential lifecycle handled outside the proxy in v1

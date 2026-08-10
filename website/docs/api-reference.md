@@ -18,6 +18,7 @@ This page focuses on the proxy-facing contract, supported S3 operations, and the
 | `DeleteObject`              | Yes       | Can fan out with `dispatch = "all"`  |
 | `HeadBucket`                | Yes       | Route-selected backend               |
 | `ListObjectsV2`             | Yes       | Uses one effective backend only      |
+| `ListObjectsV1`             | No        | Returns `NotImplemented`             |
 | `ListBuckets`               | Yes       | Proxy-defined virtual bucket list    |
 | `CopyObject`                | No        | Returns `NotImplemented`             |
 | Multipart upload operations | No        | Return `NotImplemented`              |
@@ -99,6 +100,7 @@ For `dispatch = "all"`:
 - if any destination fails, the request fails overall
 - upstream HTTP failures preserve the primary upstream error response when available
 - transport or replay failures return a proxy-generated failure
+- fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back
 - oversized replay attempts fail with `413 EntityTooLarge`; aggregate replay-budget exhaustion fails with `503 SlowDown`
 
 For writes matched by multiple routes through `on_match = "continue"`, every matched route must also succeed. A later route failure is returned as failure rather than hiding behind an earlier success.
@@ -120,3 +122,7 @@ Representative error rules:
 - upstream backend failures propagate as proxy-mediated S3 responses
 - multi-destination write failures are surfaced as failures, not partial success
 - multi-route write failures are surfaced as failures, not partial success
+
+## Health Endpoints
+
+`GET /healthz` and `GET /readyz` are local process endpoints. `/readyz` means the proxy process is serving requests; it does not poll configured backends or report destination health.

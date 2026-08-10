@@ -253,7 +253,9 @@ values into the config file.
   is used for reads (`first` by default).
 - For multi-destination writes with `dispatch = "all"`, all destinations must
   succeed. Upstream HTTP failures return the primary upstream error response;
-  transport or replay failures return a proxy error.
+  transport or replay failures return a proxy error. Fan-out is not
+  transactional: a destination that succeeds before another destination fails is
+  not rolled back.
 - For multi-route writes with `on_match = "continue"`, every matched route must
   succeed; a later route failure cannot be hidden by an earlier success.
 - `ordered_failover` only fails over on transport errors, timeouts, and

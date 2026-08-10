@@ -470,6 +470,137 @@ func TestHandler_LogsAndClosesResponseBodyCopyError(t *testing.T) {
 	}
 }
 
+func TestHandler_CompletionLogs(t *testing.T) {
+	tests := []struct {
+		name       string
+		req        *http.Request
+		deps       Dependencies
+		wantStatus int
+		wantLog    []string
+	}{
+		{
+			name:       "health",
+			req:        httptest.NewRequest(http.MethodGet, "/healthz", nil),
+			deps:       Dependencies{},
+			wantStatus: http.StatusOK,
+			wantLog:    []string{"request complete", "status=200", "bytes=2"},
+		},
+		{
+			name: "auth denial",
+			req:  httptest.NewRequest(http.MethodGet, "/bucket/key", nil),
+			deps: Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{err: errors.New("no credentials")},
+			},
+			wantStatus: http.StatusForbidden,
+			wantLog:    []string{"request complete", "status=403", "auth failed"},
+		},
+		{
+			name: "route miss",
+			req:  httptest.NewRequest(http.MethodGet, "/bucket/key", nil),
+			deps: Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{},
+				Router:        stubResolver{err: errors.New("no route")},
+			},
+			wantStatus: http.StatusNotFound,
+			wantLog:    []string{"request complete", "status=404", "no route"},
+		},
+		{
+			name: "upstream success",
+			req:  httptest.NewRequest(http.MethodGet, "/bucket/key", nil),
+			deps: Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{},
+				Authorizer:    stubAuthorizer{},
+				Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+				Rewriter:      stubRewriter{},
+				Dispatcher:    &stubFanout{results: []*dispatch.Result{{Primary: &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}}}},
+			},
+			wantStatus: http.StatusOK,
+			wantLog:    []string{"request complete", "status=200", "bytes=2"},
+		},
+		{
+			name: "upstream failure",
+			req:  httptest.NewRequest(http.MethodGet, "/bucket/key", nil),
+			deps: Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{},
+				Authorizer:    stubAuthorizer{},
+				Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+				Rewriter:      stubRewriter{},
+				Dispatcher:    &stubFanout{errs: []error{errors.New("upstream unavailable")}, results: []*dispatch.Result{nil}},
+			},
+			wantStatus: http.StatusBadGateway,
+			wantLog:    []string{"request complete", "status=502", "dispatch failed"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			tt.deps.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+			h := NewHandler(tt.deps)
+			rr := httptest.NewRecorder()
+
+			h.ServeHTTP(rr, tt.req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+			}
+			for _, want := range tt.wantLog {
+				if !strings.Contains(logs.String(), want) {
+					t.Fatalf("logs = %q, want %q", logs.String(), want)
+				}
+			}
+		})
+	}
+}
+
+func TestHandler_LogsDestinationAttempts(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "objects"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher: &stubFanout{results: []*dispatch.Result{{
+			Primary: &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))},
+			Attempts: []dispatch.Attempt{
+				{Target: "primary", Error: errors.New("dial tcp timeout")},
+				{Target: "replica", StatusCode: http.StatusOK},
+			},
+		}}},
+		Logger: logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	req.Header.Set("X-Request-Id", "req-1")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	for _, want := range []string{
+		"destination attempt failed",
+		"destination attempt succeeded",
+		"request_id=req-1",
+		"route=objects",
+		"operation=GetObject",
+		"target=primary",
+		"target=replica",
+		"status=200",
+		"dial tcp timeout",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("logs = %q, want %q", logs.String(), want)
+		}
+	}
+}
+
 type stubAuthenticator struct {
 	principal *auth.Principal
 	err       error
@@ -495,17 +626,21 @@ func (stubAuthorizer) AllowOperation(p *auth.Principal, op s3ops.Operation) bool
 
 func (stubAuthorizer) AllowRoute(*auth.Principal, string, s3ops.Operation) bool { return true }
 
-func (stubAuthorizer) AllowBucketVisibility(*auth.Principal, string) bool { return true }
-
-type stubResolver struct{ matches []router.Match }
+type stubResolver struct {
+	matches []router.Match
+	err     error
+}
 
 func (s stubResolver) Resolve(*requestctx.Context, s3ops.Operation) ([]router.Match, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.matches, nil
 }
 
 type stubRewriter struct{}
 
-func (stubRewriter) Apply(*requestctx.Context, config.Route, map[string]string) (rewrite.Result, error) {
+func (stubRewriter) Apply(*requestctx.Context, config.RewriteRule, map[string]string) (rewrite.Result, error) {
 	return rewrite.Result{Bucket: "bucket", Key: "key"}, nil
 }
 
@@ -515,7 +650,7 @@ type sequenceRewriter struct {
 	err   error
 }
 
-func (s *sequenceRewriter) Apply(*requestctx.Context, config.Route, map[string]string) (rewrite.Result, error) {
+func (s *sequenceRewriter) Apply(*requestctx.Context, config.RewriteRule, map[string]string) (rewrite.Result, error) {
 	if s.calls == s.errAt {
 		s.calls++
 		return rewrite.Result{}, s.err

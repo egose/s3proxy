@@ -49,6 +49,55 @@ func TestSingleDestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHeadBucket(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	resp, respBody := signedRequest(t, http.MethodHead, "/primary", nil, nil)
+	assertStatus(t, resp, respBody, 200)
+}
+
+func TestTamperedSignature(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	r := newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+	signRequest(t, r, nil)
+	r.URL.Path = "/primary/tampered-" + randHex(8)
+	resp, respBody := doRequest(t, r)
+	assertStatus(t, resp, respBody, 403)
+	assertBodyContains(t, respBody, "SignatureDoesNotMatch")
+}
+
+func TestVirtualHostedRoundTrip(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "virtual-" + randHex(8)
+	body := []byte("virtual hosted " + key)
+	host := "virtual-bucket.s3proxy.test"
+
+	resp, respBody := signedHostRequest(t, http.MethodPut, host, "/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedHostRequest(t, http.MethodGet, host, "/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("returned body %q does not match written %q", string(respBody), string(body))
+	}
+}
+
+func TestNamedCaptureRewrite(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	tenant := "tenant" + randHex(3)
+	key := "log-" + randHex(8)
+	body := []byte("tenant log " + key)
+	host := "tenant-" + tenant + "-logs.s3proxy.test"
+
+	resp, respBody := signedHostRequest(t, http.MethodPut, host, "/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+tenant+"/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("rewritten body %q, want %q", string(respBody), string(body))
+	}
+}
+
 // TestSingleDestSeaweedFS forwards to the SeaweedFS backend via the /replica/*
 // prefix. This validates that routing can reach an alternate backend whose
 // endpoint, addressing, and credentials differ from MinIO.
@@ -98,6 +147,64 @@ func TestFanoutWriteReplication(t *testing.T) {
 	}
 }
 
+func TestFanoutPrimaryHTTPFailureReturnsPrimaryError(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "fanout-primary-http-fail-" + randHex(8)
+	body := []byte("fanout primary fail")
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/fanout-primary-http-fail/"+key, body, nil)
+	assertStatus(t, resp, respBody, 403)
+	assertBodyContains(t, respBody, "InvalidAccessKeyId")
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("primary returned %q, want %q", string(respBody), string(body))
+	}
+}
+
+func TestFanoutReplicaHTTPFailureReturnsFailure(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "fanout-replica-http-fail-" + randHex(8)
+	body := []byte("fanout replica fail")
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/fanout-replica-http-fail/"+key, body, nil)
+	assertStatus(t, resp, respBody, 502)
+	assertBodyContains(t, respBody, "InternalError")
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("primary returned %q, want %q", string(respBody), string(body))
+	}
+}
+
+func TestFanoutTransportFailureReturnsProxyError(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "fanout-transport-fail-" + randHex(8)
+	body := []byte("fanout transport fail")
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/fanout-transport-fail/"+key, body, nil)
+	assertStatus(t, resp, respBody, 502)
+	assertBodyContains(t, respBody, "InternalError")
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("primary returned %q, want %q", string(respBody), string(body))
+	}
+}
+
+func TestReplayLimitReturnsEntityTooLarge(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "replay-too-large-" + randHex(8)
+	body := []byte(strings.Repeat("x", 65))
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/replicate/"+key, body, nil)
+	assertStatus(t, resp, respBody, 413)
+	assertBodyContains(t, respBody, "EntityTooLarge")
+}
+
 // TestFanoutDelete also deletes across both backends. After delete, both
 // backends report 404 via their respective routes.
 func TestFanoutDelete(t *testing.T) {
@@ -135,6 +242,34 @@ func TestOrderedFailoverRead(t *testing.T) {
 	}
 }
 
+func TestOrderedFailoverOn5xx(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "failover5xx-" + randHex(8)
+	body := []byte("ordered failover after 5xx " + key)
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/replica/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/failover5xx/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 200)
+	if string(respBody) != string(body) {
+		t.Errorf("returned body %q does not match written %q", string(respBody), string(body))
+	}
+}
+
+func TestOrderedFailoverDoesNotFailoverOn404(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "failover404-" + randHex(8)
+	body := []byte("ordered failover should not reach this " + key)
+
+	resp, respBody := signedRequest(t, http.MethodPut, "/replica/"+key, body, nil)
+	assertStatus(t, resp, respBody, 200)
+
+	resp, respBody = signedRequest(t, http.MethodGet, "/failover404/"+key, nil, nil)
+	assertStatus(t, resp, respBody, 404)
+	assertBodyContains(t, respBody, "NoSuchKey")
+}
+
 // TestPresignedGet_LongLivedStillValid proves query-signed auth honors
 // X-Amz-Expires rather than the tighter 15-minute skew window alone.
 func TestPresignedGet_LongLivedStillValid(t *testing.T) {
@@ -159,6 +294,21 @@ func TestPresignedGet_Expired(t *testing.T) {
 	resp, respBody := presignedRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, time.Now().UTC().Add(-2*time.Minute), time.Minute)
 	assertStatus(t, resp, respBody, 403)
 	assertBodyContains(t, respBody, "AccessDenied")
+}
+
+func TestMultipartAndCopyObjectRejected(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	key := "unsupported-" + randHex(8)
+	query := url.Values{}
+	query.Set("uploads", "")
+	resp, respBody := signedRequest(t, http.MethodPut, "/primary/"+key, nil, query)
+	assertStatus(t, resp, respBody, 501)
+	assertBodyContains(t, respBody, "NotImplemented")
+
+	headers := http.Header{"X-Amz-Copy-Source": []string{"/testbucket/source"}}
+	resp, respBody = signedRequestWithHeaders(t, http.MethodPut, "/primary/"+key, nil, nil, headers)
+	assertStatus(t, resp, respBody, 501)
+	assertBodyContains(t, respBody, "NotImplemented")
 }
 
 // TestContinueWriteComposition proves on_match=continue for write-only routes:
@@ -260,6 +410,7 @@ func TestListBuckets(t *testing.T) {
 	assertBodyContains(t, respBody, "replicate-bucket")
 	assertBodyContains(t, respBody, "failover-bucket")
 	assertBodyContains(t, respBody, "compose-bucket")
+	assertBodyContains(t, respBody, "virtual-bucket")
 }
 
 // TestAuthFailure sends an unsigned request to a routing prefix. The proxy

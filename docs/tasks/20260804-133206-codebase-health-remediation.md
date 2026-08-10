@@ -378,7 +378,7 @@ Completion evidence 2026-08-09:
 
 ### Task RESOURCE-02: Bound Aggregate Replay Memory And Clarify Body Ownership
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P1
 
@@ -419,11 +419,21 @@ Acceptance criteria:
 - Replay behavior remains reusable by auth, dispatch, handler, and backend without duplicate buffering.
 - `go test ./internal/replaybody ./internal/auth ./internal/backend/s3 ./internal/dispatch ./internal/httpapi` and `make test-race` pass.
 
+Completion evidence 2026-08-09:
+
+- Added an app-scoped replay budget shared by auth payload-hash verification, handler multi-route replay, dispatcher fan-out replay, and backend unknown-length upload replay.
+- Added `listener.replay_body_aggregate_max_bytes`; `0` defaults to `256 MiB`. Aggregate exhaustion returns `503 SlowDown` immediately, while per-request overflow remains `413 EntityTooLarge`.
+- Added replaybody package coverage for nil/no-body, known oversize, unknown-length overflow, read failure, idempotence, reset, custom `GetBody` error, default limit, close ownership, release paths, and concurrent aggregate reservations.
+- Updated README, website docs, and sandbox config for the aggregate replay budget contract.
+- `go test ./internal/replaybody ./internal/auth ./internal/backend/s3 ./internal/dispatch ./internal/httpapi ./internal/config ./internal/app`: passed.
+- `make test-race`: passed.
+- `make vet test`: passed.
+
 ## Wave 4: Encapsulation, Lifecycle, And Operations
 
 ### Task APP-01: Make App Construction And Shutdown Side-Effect Free
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P1
 
@@ -466,9 +476,18 @@ Acceptance criteria:
 - Stray positional CLI arguments are rejected.
 - `go test ./internal/app ./cmd/s3proxy` passes.
 
+Completion evidence 2026-08-09:
+
+- Made `App` lifecycle fields private, injected/stored an app-scoped logger, and removed reusable construction's `slog.SetDefault` mutation.
+- Added `app.ValidateConfig` so the CLI `validate` command loads config without constructing runtime HTTP dependencies.
+- Made `Run` observe all server exits, normalize `http.ErrServerClosed`, use a configurable shutdown timeout for tests, and close retained transport idle connections on shutdown.
+- Added Cobra `NoArgs` enforcement and output injection for `validate` and `version`.
+- Added lifecycle and CLI regression tests for bind failure, context cancellation, external server close, shutdown timeout, repeated build/shutdown, logger isolation, injected output, and positional arg rejection.
+- `go test ./internal/app ./cmd/s3proxy`: passed.
+
 ### Task ARCH-01: Narrow Runtime Boundaries And Snapshot Configuration
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P2
 
@@ -516,9 +535,19 @@ Acceptance criteria:
 - A table proves accepted config operations and runtime capability predicates cannot diverge.
 - `make vet test` and `make test-race` pass.
 
+Completion evidence 2026-08-09:
+
+- Added handler-owned narrow interfaces for authentication, authorization, routing, rewriting, dispatch, and bucket listing so test doubles implement only consumed methods.
+- Removed duplicate bucket-visibility authorization from `auth`; `listbuckets` remains the single visibility owner.
+- Snapshotted retained router routes/parsers/targets and list-bucket views at construction, with mutation regression tests.
+- Changed rewriting to accept `config.RewriteRule` instead of full routes and moved operation vocabulary/capabilities into the dependency-neutral `internal/s3op` leaf package.
+- `go test ./internal/httpapi ./internal/rewrite ./internal/auth ./internal/router ./internal/listbuckets ./internal/s3ops ./internal/config`: passed.
+- `make vet test`: passed.
+- `make test-race`: passed.
+
 ### Task OPS-01: Add Actionable Completion And Destination Telemetry
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P2
 
@@ -559,11 +588,18 @@ Acceptance criteria:
 - Logger tests use an isolated buffer-backed handler and do not depend on global slog state.
 - `go test ./internal/httpapi ./internal/dispatch` passes.
 
+Completion evidence 2026-08-09:
+
+- Added a response-writer recorder so every request emits one structured completion log with request ID, method, path, status, bytes, and duration.
+- Added dispatch attempt metadata and handler destination-attempt logs for fan-out/failover degraded success and failure without request payloads or credentials.
+- Documented `/readyz` as startup readiness only; no backend polling was added.
+- `go test ./internal/httpapi ./internal/dispatch`: passed.
+
 ## Wave 5: Measured Performance And Integration Coverage
 
 ### Task PERF-01: Measure And Remove Confirmed Hot-Path Waste
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P3
 
@@ -604,9 +640,21 @@ Acceptance criteria:
 - Any parallel fan-out is bounded, cancellation-safe, race-free, and semantically equivalent.
 - `make vet test`, `make test-race`, and relevant `go test -bench . -benchmem` commands pass.
 
+Completion evidence 2026-08-09:
+
+- Added benchmarks for outbound header forwarding, escaped-path canonicalization, route resolution/matching, and current serial fan-out dispatch.
+- Set upstream `MaxIdleConnsPerHost` to `32` and added tests for the configured value and same-host concurrent connection reuse across repeated waves.
+- Reused parsed `Connection` header tokens once per outbound request, replaced `fmt.Sprintf` percent escaping with direct hex writes, and avoided capture-map allocation for non-regex parser matches.
+- Benchmark evidence on linux/amd64: header forwarding improved from `18083 ns/op`, `17600 B/op`, `346 allocs/op` to `7575 ns/op`, `6640 B/op`, `112 allocs/op`; escaped-path canonicalization improved from `561.7 ns/op`, `160 B/op`, `7 allocs/op` to `138.9 ns/op`, `144 B/op`, `2 allocs/op`; path-prefix parser matching improved from `40.83 ns/op`, `48 B/op`, `1 alloc/op` to `16.99 ns/op`, `0 B/op`, `0 allocs/op`.
+- Kept fan-out serial; `BenchmarkDispatchFanoutSerial` recorded `1071 ns/op`, `1271 B/op`, `25 allocs/op`, but deterministic primary/error semantics were not changed without a separate concurrency design.
+- `go test ./internal/app ./internal/backend/s3 ./internal/router ./internal/dispatch`: passed.
+- `go test -bench . -benchmem ./internal/backend/s3 ./internal/router ./internal/dispatch`: passed.
+- `make vet test`: passed.
+- `make test-race`: passed.
+
 ### Task TEST-01: Close Contract And End-To-End Coverage Gaps
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P2
 
@@ -652,6 +700,15 @@ Acceptance criteria:
 - `make vet test` passes.
 - `make sandbox-integration-up` passes when Docker and the live sandbox are available.
 
+Completion evidence 2026-08-09:
+
+- Added live-stack integration coverage for tampered signatures, virtual-hosted routing, named-capture key templates, multipart initiation rejection, CopyObject rejection, HeadBucket, fan-out primary HTTP failure, fan-out later HTTP failure, fan-out transport failure, ordered failover on `5xx`, no failover on `404`, and replay-limit `413`.
+- Extended the sandbox integration config with virtual-hosted addressing, named-capture routes, deterministic fan-out failure routes, a low per-request replay limit, and a deterministic sandbox `500` upstream while preserving existing sandbox services.
+- Aligned docs for fan-out failure responses, non-transactional fan-out writes, virtual-bucket route references, and removed claims for metrics that are not implemented.
+- `go test -tags integration -run '^$' ./internal/integration`: passed.
+- `make vet test`: passed.
+- `make sandbox-integration-up`: passed.
+
 ## Deferred Maintainer Decisions
 
 These decisions do not block Wave 1 confirmed fixes unless noted:
@@ -668,7 +725,7 @@ These decisions do not block Wave 1 confirmed fixes unless noted:
 
 ### Task INTEGRATION-01: Independently Audit Remediation Completion
 
-Status: pending
+Status: completed 2026-08-09
 
 Priority: P0
 
@@ -703,6 +760,16 @@ Acceptance criteria:
 - `make sandbox-integration-up` passes when the live sandbox is available, or the environmental blocker and unverified scenarios are recorded.
 - No P0/P1 task remains pending without an explicit owner, blocker, and risk statement.
 - Completion evidence is appended to every completed task.
+
+Completion evidence 2026-08-09:
+
+- Independently audited the remediated authentication, replay/body ownership, streaming, routing, lifecycle, documentation, and logging boundaries against the task acceptance criteria and existing tests.
+- Confirmed all prior P0/P1 remediation tasks and PERF-01 have completion evidence; no P0/P1 implementation task remains pending.
+- Clarified public documentation for `ListObjectsV1` unsupported behavior and `/readyz` startup-only readiness, and added residual-risk wording for deferred credential-lifecycle features.
+- `make vet test`: passed.
+- `make test-race`: passed.
+- `make build`: passed.
+- `make sandbox-integration-up`: passed.
 
 ## Definition Of Done
 

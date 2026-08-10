@@ -162,3 +162,47 @@ func TestIsMultipart_False(t *testing.T) {
 		t.Error("did not expect multipart detection")
 	}
 }
+
+func TestConfigurableOperationsMatchRuntimeCapabilities(t *testing.T) {
+	tests := []struct {
+		op           Operation
+		configurable bool
+		read         bool
+		write        bool
+		fanout       bool
+	}{
+		{OpGetObject, true, true, false, false},
+		{OpHeadObject, true, true, false, false},
+		{OpPutObject, true, false, true, true},
+		{OpDeleteObject, true, false, true, true},
+		{OpHeadBucket, true, true, false, false},
+		{OpListObjectsV2, true, true, false, false},
+		{OpListBuckets, true, true, false, false},
+		{OpListObjectsV1, false, true, false, false},
+		{OpCopyObject, false, false, true, false},
+		{OpUnknown, false, false, false, false},
+	}
+	configured := map[Operation]bool{}
+	for _, op := range ConfigurableOperations() {
+		configured[op] = true
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.op), func(t *testing.T) {
+			if got := IsConfigurable(string(tt.op)); got != tt.configurable {
+				t.Fatalf("IsConfigurable = %v, want %v", got, tt.configurable)
+			}
+			if got := configured[tt.op]; got != tt.configurable {
+				t.Fatalf("ConfigurableOperations contains op = %v, want %v", got, tt.configurable)
+			}
+			if got := IsRead(tt.op); got != tt.read {
+				t.Fatalf("IsRead = %v, want %v", got, tt.read)
+			}
+			if got := IsWrite(tt.op); got != tt.write {
+				t.Fatalf("IsWrite = %v, want %v", got, tt.write)
+			}
+			if got := SupportsFanout(tt.op); got != tt.fanout {
+				t.Fatalf("SupportsFanout = %v, want %v", got, tt.fanout)
+			}
+		})
+	}
+}

@@ -18,27 +18,26 @@ type Service interface {
 }
 
 func New(buckets []config.VirtualBucket, startupTime time.Time) Service {
+	views := make([]BucketView, 0, len(buckets))
+	for _, bucket := range buckets {
+		views = append(views, BucketView{Name: bucket.VisibleName, CreationDate: startupTime})
+	}
 	return &service{
-		buckets: buckets,
-		created: startupTime,
+		buckets: views,
 	}
 }
 
 type service struct {
-	buckets []config.VirtualBucket
-	created time.Time
+	buckets []BucketView
 }
 
 func (s *service) List(principal *auth.Principal) []BucketView {
 	var views []BucketView
 	for _, b := range s.buckets {
-		if !isVisible(principal, b.VisibleName) {
+		if !isVisible(principal, b.Name) {
 			continue
 		}
-		views = append(views, BucketView{
-			Name:         b.VisibleName,
-			CreationDate: s.created,
-		})
+		views = append(views, b)
 	}
 	sort.Slice(views, func(i, j int) bool {
 		return views[i].Name < views[j].Name

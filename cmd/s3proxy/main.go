@@ -12,8 +12,7 @@ import (
 )
 
 var (
-	configPath string
-	version    = "dev"
+	version = "dev"
 )
 
 func main() {
@@ -29,12 +28,14 @@ func main() {
 }
 
 func newServeCommand() *cobra.Command {
+	var cfgPath string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the S3 proxy server",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := app.Build(context.Background(), app.BuildOptions{
-				ConfigPath: configPath,
+				ConfigPath: cfgPath,
 				Version:    version,
 			})
 			if err != nil {
@@ -47,7 +48,7 @@ func newServeCommand() *cobra.Command {
 			return a.Run(ctx)
 		},
 	}
-	cmd.Flags().StringVarP(&configPath, "config", "c", "", "path to config file (required)")
+	cmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to config file (required)")
 	cmd.MarkFlagRequired("config")
 	return cmd
 }
@@ -57,15 +58,12 @@ func newValidateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate the config file without running the server",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := app.Build(context.Background(), app.BuildOptions{
-				ConfigPath: cfgPath,
-				Version:    version,
-			})
-			if err != nil {
+			if err := app.ValidateConfig(cfgPath); err != nil {
 				return err
 			}
-			fmt.Println("config is valid")
+			fmt.Fprintln(cmd.OutOrStdout(), "config is valid")
 			return nil
 		},
 	}
@@ -78,8 +76,9 @@ func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
+		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(version)
+			fmt.Fprintln(cmd.OutOrStdout(), version)
 		},
 	}
 }

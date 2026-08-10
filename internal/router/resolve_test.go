@@ -1,6 +1,7 @@
 package router
 
 import (
+	"net/url"
 	"regexp"
 	"testing"
 
@@ -223,5 +224,36 @@ func TestResolve_HostSuffixRequiresLabelBoundary(t *testing.T) {
 	}
 	if got, want := matches[0].Route.Name, "hosted_read"; got != want {
 		t.Fatalf("route = %q, want %q", got, want)
+	}
+}
+
+func TestResolverSnapshotsRuntimeAtConstruction(t *testing.T) {
+	rt := buildTestRuntime()
+	endpoint, err := url.Parse("https://a.internal/base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Targets["primary"] = config.S3Target{Name: "primary", Endpoint: endpoint.String(), EndpointURL: endpoint, Region: "us-east-1"}
+	r := NewResolver(rt)
+
+	rt.Routes[0].Name = "mutated"
+	rt.Routes[0].Operations[0] = "DeleteObject"
+	rt.Routes[0].DestinationRefs[0] = "replica"
+	rt.Parsers["images"] = config.Parser{Name: "images", Kind: config.ParserPathPrefix, Prefix: "/mutated"}
+	rt.Targets["primary"] = config.S3Target{Name: "mutated", Endpoint: "https://mutated", Region: "us-west-2"}
+	endpoint.Host = "changed.internal"
+
+	matches, err := r.Resolve(&requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}, s3ops.OpGetObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := matches[0].Route.Name, "images_rw"; got != want {
+		t.Fatalf("Route.Name = %q, want %q", got, want)
+	}
+	if got, want := matches[0].Destinations[0].Name, "primary"; got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+	if got, want := matches[0].Destinations[0].EndpointURL.Host, "a.internal"; got != want {
+		t.Fatalf("EndpointURL.Host = %q, want %q", got, want)
 	}
 }

@@ -222,6 +222,15 @@ func TestDispatch_OrderedFailoverRetriesTransportError(t *testing.T) {
 	if _, ok := result.Errors["primary"]; !ok {
 		t.Fatalf("expected error recorded for first destination, got %#v", result.Errors)
 	}
+	if got, want := len(result.Attempts), 2; got != want {
+		t.Fatalf("attempts = %d, want %d", got, want)
+	}
+	if result.Attempts[0].Target != "primary" || result.Attempts[0].Error == nil {
+		t.Fatalf("first attempt = %#v, want primary error", result.Attempts[0])
+	}
+	if result.Attempts[1].Target != "replica" || result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].Error != nil {
+		t.Fatalf("second attempt = %#v, want replica 200", result.Attempts[1])
+	}
 	result.Primary.Body.Close()
 }
 
@@ -248,6 +257,15 @@ func TestDispatch_OrderedFailoverRetriesUpstream5xx(t *testing.T) {
 	}
 	if _, ok := result.Errors["primary"]; !ok {
 		t.Fatalf("expected 5xx recorded for first destination, got %#v", result.Errors)
+	}
+	if got, want := len(result.Attempts), 2; got != want {
+		t.Fatalf("attempts = %d, want %d", got, want)
+	}
+	if result.Attempts[0].Target != "primary" || result.Attempts[0].StatusCode != http.StatusBadGateway || result.Attempts[0].Error == nil {
+		t.Fatalf("first attempt = %#v, want primary 502 error", result.Attempts[0])
+	}
+	if result.Attempts[1].Target != "replica" || result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].Error != nil {
+		t.Fatalf("second attempt = %#v, want replica 200", result.Attempts[1])
 	}
 	if !failedBody.closed {
 		t.Fatal("expected failed failover response body to be closed before retry")
@@ -344,6 +362,33 @@ func TestDispatch_OrderedFailoverReturnsLast5xxWhenExhausted(t *testing.T) {
 		t.Fatalf("calls = %d, want 2", got)
 	}
 	result.Primary.Body.Close()
+}
+
+func TestDispatch_OrderedFailoverReportsTransportAttemptsWhenExhausted(t *testing.T) {
+	backend := &stubBackend{
+		responses: []stubCall{
+			{err: errors.New("primary timeout")},
+			{err: errors.New("replica timeout")},
+		},
+	}
+	d := &dispatcher{backend: backend}
+	req := mustRequest(t)
+
+	result, err := d.Dispatch(context.Background(), orderedFailoverMatch(), req, s3ops.OpGetObject, rewrite.Result{Bucket: "bucket", Key: "key"})
+	if err == nil {
+		t.Fatal("expected ordered failover to report exhaustion")
+	}
+	if result == nil {
+		t.Fatal("expected result with attempt metadata")
+	}
+	if got, want := len(result.Attempts), 2; got != want {
+		t.Fatalf("attempts = %d, want %d", got, want)
+	}
+	for i, target := range []string{"primary", "replica"} {
+		if result.Attempts[i].Target != target || result.Attempts[i].Error == nil {
+			t.Fatalf("attempt %d = %#v, want %s error", i, result.Attempts[i], target)
+		}
+	}
 }
 
 func mustRequest(t *testing.T) *http.Request {

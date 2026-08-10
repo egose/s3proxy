@@ -60,7 +60,6 @@ func (a *sigv4StaticAuthenticator) Authenticate(r *http.Request) (*Principal, er
 type Authorizer interface {
 	AllowOperation(p *Principal, op s3ops.Operation) bool
 	AllowRoute(p *Principal, routeName string, op s3ops.Operation) bool
-	AllowBucketVisibility(p *Principal, visibleBucket string) bool
 }
 
 type staticAuthorizer struct{}
@@ -84,13 +83,6 @@ func (a *staticAuthorizer) AllowRoute(p *Principal, routeName string, op s3ops.O
 		return true
 	}
 	return false
-}
-
-func (a *staticAuthorizer) AllowBucketVisibility(p *Principal, visibleBucket string) bool {
-	if p == nil {
-		return true
-	}
-	return matchStringList(p.VisibleBuckets, visibleBucket)
 }
 
 func matchStringList(allow []string, value string) bool {

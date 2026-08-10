@@ -14,8 +14,15 @@ import (
 )
 
 type Result struct {
-	Primary *s3.Response
-	Errors  map[string]error
+	Primary  *s3.Response
+	Errors   map[string]error
+	Attempts []Attempt
+}
+
+type Attempt struct {
+	Target     string
+	StatusCode int
+	Error      error
 }
 
 type Fanout interface {
@@ -67,8 +74,10 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 			Source:    req,
 		})
 		if err != nil {
+			result.Attempts = append(result.Attempts, Attempt{Target: target.Name, Error: err})
 			return nil, err
 		}
+		result.Attempts = append(result.Attempts, Attempt{Target: target.Name, StatusCode: resp.StatusCode})
 		result.Primary = resp
 		return result, nil
 	}
@@ -93,12 +102,16 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 		})
 		if err != nil {
 			result.Errors[dest.Name] = err
+			result.Attempts = append(result.Attempts, Attempt{Target: dest.Name, Error: err})
 			continue
 		}
+		attempt := Attempt{Target: dest.Name, StatusCode: resp.StatusCode}
 
 		if resp.StatusCode >= 400 {
-			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			attempt.Error = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			result.Errors[dest.Name] = attempt.Error
 		}
+		result.Attempts = append(result.Attempts, attempt)
 
 		if i == 0 {
 			result.Primary = resp
@@ -140,11 +153,15 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 		})
 		if err != nil {
 			result.Errors[dest.Name] = err
+			result.Attempts = append(result.Attempts, Attempt{Target: dest.Name, Error: err})
 			continue
 		}
+		attempt := Attempt{Target: dest.Name, StatusCode: resp.StatusCode}
 
 		if resp.StatusCode >= http.StatusInternalServerError {
-			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			attempt.Error = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			result.Errors[dest.Name] = attempt.Error
+			result.Attempts = append(result.Attempts, attempt)
 			if i < len(match.Destinations)-1 {
 				s3.DrainAndClose(resp)
 				continue
@@ -153,6 +170,7 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 			continue
 		}
 
+		result.Attempts = append(result.Attempts, attempt)
 		result.Primary = resp
 		return result, nil
 	}
@@ -160,5 +178,5 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 	if result.Primary != nil {
 		return result, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
 	}
-	return nil, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
+	return result, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
 }

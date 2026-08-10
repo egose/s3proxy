@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/egose/s3proxy/internal/s3op"
 )
 
 func Validate(rt *Runtime) error {
@@ -189,11 +191,8 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 			return fmt.Errorf("route %q: at least one operation is required", r.Name)
 		}
 		for _, op := range r.Operations {
-			if !isValidOperation(op) {
+			if !s3op.IsConfigurable(op) {
 				return fmt.Errorf("route %q: unsupported operation %q", r.Name, op)
-			}
-			if op == "CopyObject" {
-				return fmt.Errorf("route %q: operation %q is not implemented", r.Name, op)
 			}
 			if r.Dispatch == DispatchAll && !supportsDispatchAllRouteOperation(op) {
 				return fmt.Errorf("route %q: dispatch %q does not support write operation %q", r.Name, r.Dispatch, op)
@@ -288,7 +287,7 @@ func validateClientOps(authName string, c Client) error {
 		if op == "*" {
 			continue
 		}
-		if !isValidOperation(op) || op == "CopyObject" {
+		if !s3op.IsConfigurable(op) {
 			return fmt.Errorf("auth %q: client %q: allow_ops contains unsupported operation %q", authName, c.Name, op)
 		}
 	}
@@ -303,16 +302,6 @@ func policyRefKind(field string) string {
 		return "bucket"
 	default:
 		return "reference"
-	}
-}
-
-func isValidOperation(op string) bool {
-	switch op {
-	case "GetObject", "HeadObject", "PutObject", "DeleteObject",
-		"HeadBucket", "ListObjectsV2", "ListBuckets", "CopyObject":
-		return true
-	default:
-		return false
 	}
 }
 
