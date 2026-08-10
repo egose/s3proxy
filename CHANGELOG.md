@@ -1,3 +1,14 @@
+## [0.2.0](https://github.com/egose/s3proxy/compare/v0.1.0...v0.2.0) (2026-08-10)
+
+### Features
+
+* **website:** add replay budget, auth verification, and routing fixes ([4bc6802](https://github.com/egose/s3proxy/commit/4bc6802adf122a2e34a853673653c2e69cfd81a9))
+* **website:** complete lifecycle, routing, logging, and integration updates ([b0d86da](https://github.com/egose/s3proxy/commit/b0d86dada8f1794ac72ccc9c5cdc9efb8fbc3a71))
+
+### Documentation
+
+* add codebase health remediation plan ([3007031](https://github.com/egose/s3proxy/commit/3007031d6ed82083faefcec3fc79614c592c2a05))
+
 ## [0.1.0](https://github.com/egose/s3proxy/compare/v0.0.1...v0.1.0) (2026-07-29)
 
 ### Features
