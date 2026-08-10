@@ -183,7 +183,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n  replay_body_max_bytes = 33554432\n\n  addressing {\n    path_style     = true\n    virtual_hosted = true\n    host_suffixes  = [\"s3proxy.example.com\"]\n  }\n\n  timeouts {\n    read_header = \"10s\"\n    idle        = \"60s\"\n    write       = \"0s\"\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"ci\" {\n    access_key      = env(\"S3PROXY_CLIENT_CI_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_CI_SECRET_KEY\")\n    allow_routes    = [\"route.images_rw\"]\n    visible_buckets = [\"images\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"https://minio-a.internal\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  timeout          = \"5s\"\n  credentials      = \"primary\"\n}\n\nparser \"path_prefix\" \"images\" {\n  prefix = \"/images\"\n}\n\nroute \"images_rw\" {\n  parser          = \"images\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\", \"ListObjectsV2\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix  = \"/images\"\n    prepend_key_prefix = \"assets/\"\n    bucket             = \"images-store\"\n  }\n}\n\nbucket \"images\" {\n  visible_name = \"images\"\n  route        = \"images_rw\"\n}\n"
+        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n  replay_body_max_bytes = 33554432\n  replay_body_aggregate_max_bytes = 268435456\n\n  addressing {\n    path_style     = true\n    virtual_hosted = true\n    host_suffixes  = [\"s3proxy.example.com\"]\n  }\n\n  timeouts {\n    read_header = \"10s\"\n    idle        = \"60s\"\n    write       = \"0s\"\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"ci\" {\n    access_key      = env(\"S3PROXY_CLIENT_CI_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_CI_SECRET_KEY\")\n    allow_routes    = [\"route.images_rw\"]\n    visible_buckets = [\"images\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"https://minio-a.internal\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  timeout          = \"5s\"\n  credentials      = \"primary\"\n}\n\nparser \"path_prefix\" \"images\" {\n  prefix = \"/images\"\n}\n\nroute \"images_rw\" {\n  parser          = \"images\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\", \"ListObjectsV2\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix  = \"/images\"\n    prepend_key_prefix = \"assets/\"\n    bucket             = \"images-store\"\n  }\n}\n\nbucket \"images\" {\n  visible_name = \"images\"\n  route        = \"images_rw\"\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "listener",
@@ -204,6 +204,10 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: (0,jsx_runtime.jsx)(_components.code, {
           children: "replay_body_max_bytes"
+        })
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: (0,jsx_runtime.jsx)(_components.code, {
+          children: "replay_body_aggregate_max_bytes"
         })
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: (0,jsx_runtime.jsx)(_components.code, {
@@ -254,15 +258,25 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "replay_body_max_bytes"
-        }), " caps in-memory buffering when the proxy must replay a request body; ", (0,jsx_runtime.jsx)(_components.code, {
+        }), " caps per-request buffering when the proxy must replay a request body; ", (0,jsx_runtime.jsx)(_components.code, {
           children: "0"
         }), " uses the default ", (0,jsx_runtime.jsx)(_components.code, {
           children: "32 MiB"
         })]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "replay_body_aggregate_max_bytes"
+        }), " caps retained replay buffers across the process; ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0"
+        }), " uses the default ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "256 MiB"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["replay-bound requests fail with ", (0,jsx_runtime.jsx)(_components.code, {
           children: "413 EntityTooLarge"
-        }), " when the limit is exceeded"]
+        }), " when the per-request limit is exceeded and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "503 SlowDown"
+        }), " when the aggregate budget is exhausted"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "auth",
@@ -466,6 +480,10 @@ function _createMdxContent(props) {
         }), " keeps collecting matches"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["For multi-destination writes and multi-route writes collected with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "on_match = \"continue\""
+      }), ", every selected destination or route must succeed. Upstream HTTP failures preserve the primary upstream error response when available; transport or replay failures return a proxy-generated failure."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Supported ", (0,jsx_runtime.jsx)(_components.code, {
         children: "read_preference"
       }), " values:"]
@@ -550,9 +568,11 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "visible_name"
-      }), " is what the client sees. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " is what the client sees in virtual ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListBuckets"
+      }), " responses. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "route"
-      }), " decides how requests for that bucket are handled."]
+      }), " links that listed bucket to an existing route for policy validation; it does not create an additional request route by itself."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "environment-variables",
       children: "Environment Variables"

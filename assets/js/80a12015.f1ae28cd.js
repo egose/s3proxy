@@ -180,6 +180,8 @@ function _createMdxContent(props) {
       }), " can be applied to multiple matching routes if the earlier match uses ", (0,jsx_runtime.jsx)(_components.code, {
         children: "continue"
       }), "."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "For write requests matched by multiple routes, every matched route must succeed. A later route failure is returned as failure rather than hiding behind an earlier success."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "dispatch-modes",
       children: "Dispatch Modes"
@@ -211,7 +213,11 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "if any destination fails during a fan-out write, the request fails"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "the client gets the primary upstream response body rather than a generic proxy error body"
+        children: "upstream HTTP failures preserve the primary upstream error response when available"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "transport or replay failures return a proxy-generated failure"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back"
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "read-preference",

@@ -218,7 +218,9 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["request bodies that need replay are buffered in memory up to ", (0,jsx_runtime.jsx)(_components.code, {
           children: "listener.replay_body_max_bytes"
-        })]
+        }), " per request and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_aggregate_max_bytes"
+        }), " across the process"]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "reads use one effective backend even when a route has multiple destinations"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
@@ -229,9 +231,11 @@ function _createMdxContent(props) {
         })]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["If the replay limit is exceeded, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["If the per-request replay limit is exceeded, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
         children: "413 EntityTooLarge"
-      }), " instead of attempting the upstream request."]
+      }), " instead of attempting the upstream request. If the process aggregate replay budget is exhausted, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "503 SlowDown"
+      }), " immediately instead of blocking request goroutines."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "logging-and-diagnostics",
       children: "Logging And Diagnostics"

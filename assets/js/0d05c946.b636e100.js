@@ -147,7 +147,9 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["you have sized ", (0,jsx_runtime.jsx)(_components.code, {
           children: "listener.replay_body_max_bytes"
-        }), " for the largest write you expect to replay"]
+        }), " for the largest write you expect to replay and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_aggregate_max_bytes"
+        }), " for expected concurrent replays"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "ordered-read-failover",

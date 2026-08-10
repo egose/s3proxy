@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">s3proxy</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://s3proxy.pages.dev/img/social-card.svg"><meta data-rh="true" name="twitter:image" content="https://s3proxy.pages.dev/img/social-card.svg"><meta data-rh="true" property="og:url" content="https://s3proxy.pages.dev/docs/intro"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="s3proxy"><meta data-rh="true" name="description" content="s3proxy is a Go service that accepts S3-compatible requests and forwards them to one or more configured S3-compatible backends."><meta data-rh="true" property="og:description" content="s3proxy is a Go service that accepts S3-compatible requests and forwards them to one or more configured S3-compatible backends."><link data-rh="true" rel="icon" href="/img/logo.svg"><link data-rh="true" rel="canonical" href="https://s3proxy.pages.dev/docs/intro"><link data-rh="true" rel="alternate" href="https://s3proxy.pages.dev/docs/intro" hreflang="en"><link data-rh="true" rel="alternate" href="https://s3proxy.pages.dev/docs/intro" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"s3proxy","item":"https://s3proxy.pages.dev/docs/intro"}]}</script><link rel="stylesheet" href="/assets/css/styles.92288b91.css">
-<script src="/assets/js/runtime~main.30c155ba.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.1630c092.js" defer="defer"></script>
 <script src="/assets/js/main.307d068e.js" defer="defer"></script>
 </head>
 <body>
@@ -74,7 +74,7 @@
 <ul>
 <li class=""><code>ListBuckets</code> is virtual. It returns proxy-defined buckets visible to the authenticated client, not upstream bucket discovery.</li>
 <li class="">Reads never fan out in v1. Even when a route has multiple destinations, one effective backend is selected per read.</li>
-<li class="">For <code>dispatch = &quot;all&quot;</code>, write request bodies are buffered in memory before they are replayed to each destination, bounded by <code>listener.replay_body_max_bytes</code>.</li>
+<li class="">For <code>dispatch = &quot;all&quot;</code>, write request bodies are buffered in memory before they are replayed to each destination, bounded by <code>listener.replay_body_max_bytes</code> per request and <code>listener.replay_body_aggregate_max_bytes</code> across the process.</li>
 <li class=""><code>ordered_failover</code> only fails over on transport errors, timeouts, and upstream <code>5xx</code>. It does not fail over on <code>404</code>, <code>NoSuchKey</code>, or <code>NoSuchBucket</code>.</li>
 <li class=""><code>path_prefix</code> matching is strict: <code>RawPath == prefix</code> or <code>RawPath</code> starts with <code>prefix + &quot;/&quot;</code>.</li>
 </ul>

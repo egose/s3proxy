@@ -81,6 +81,10 @@ const toc = [{
   "value": "Error Behavior",
   "id": "error-behavior",
   "level": 2
+}, {
+  "value": "Health Endpoints",
+  "id": "health-endpoints",
+  "level": 2
 }];
 function _createMdxContent(props) {
   const _components = {
@@ -190,6 +194,18 @@ function _createMdxContent(props) {
             children: "Yes"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "Uses one effective backend only"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "ListObjectsV1"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "No"
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Returns ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "NotImplemented"
+            })]
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
@@ -389,16 +405,28 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["the request body is buffered in memory so it can be replayed, bounded by ", (0,jsx_runtime.jsx)(_components.code, {
           children: "listener.replay_body_max_bytes"
-        })]
+        }), " per request and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "listener.replay_body_aggregate_max_bytes"
+        }), " across the process"]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "if any destination fails, the request fails overall"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "the client receives the primary upstream response body on failure"
+        children: "upstream HTTP failures preserve the primary upstream error response when available"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "transport or replay failures return a proxy-generated failure"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["oversized replay attempts fail with ", (0,jsx_runtime.jsx)(_components.code, {
           children: "413 EntityTooLarge"
+        }), "; aggregate replay-budget exhaustion fails with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "503 SlowDown"
         })]
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["For writes matched by multiple routes through ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "on_match = \"continue\""
+      }), ", every matched route must also succeed. A later route failure is returned as failure rather than hiding behind an earlier success."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "outbound-signing",
       children: "Outbound Signing"
@@ -428,7 +456,20 @@ function _createMdxContent(props) {
         children: "upstream backend failures propagate as proxy-mediated S3 responses"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "multi-destination write failures are surfaced as failures, not partial success"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "multi-route write failures are surfaced as failures, not partial success"
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "health-endpoints",
+      children: "Health Endpoints"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "GET /healthz"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "GET /readyz"
+      }), " are local process endpoints. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/readyz"
+      }), " means the proxy process is serving requests; it does not poll configured backends or report destination health."]
     })]
   });
 }

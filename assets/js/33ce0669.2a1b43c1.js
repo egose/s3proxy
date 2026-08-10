@@ -254,6 +254,10 @@ function _createMdxContent(props) {
         }), " writes must succeed on every destination"]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "on_match = \"continue\""
+        }), " writes must succeed on every matched route"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "ordered_failover"
         }), " does not fail over on ", (0,jsx_runtime.jsx)(_components.code, {
           children: "404"

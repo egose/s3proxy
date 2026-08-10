@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">Routing and Rewrites | s3proxy</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://s3proxy.pages.dev/img/social-card.svg"><meta data-rh="true" name="twitter:image" content="https://s3proxy.pages.dev/img/social-card.svg"><meta data-rh="true" property="og:url" content="https://s3proxy.pages.dev/docs/providers-and-routing"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Routing and Rewrites | s3proxy"><meta data-rh="true" name="description" content="s3proxy routes requests from a normalized S3 request context, not just from the raw HTTP method."><meta data-rh="true" property="og:description" content="s3proxy routes requests from a normalized S3 request context, not just from the raw HTTP method."><link data-rh="true" rel="icon" href="/img/logo.svg"><link data-rh="true" rel="canonical" href="https://s3proxy.pages.dev/docs/providers-and-routing"><link data-rh="true" rel="alternate" href="https://s3proxy.pages.dev/docs/providers-and-routing" hreflang="en"><link data-rh="true" rel="alternate" href="https://s3proxy.pages.dev/docs/providers-and-routing" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Routing and Rewrites","item":"https://s3proxy.pages.dev/docs/providers-and-routing"}]}</script><link rel="stylesheet" href="/assets/css/styles.92288b91.css">
-<script src="/assets/js/runtime~main.30c155ba.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.1630c092.js" defer="defer"></script>
 <script src="/assets/js/main.307d068e.js" defer="defer"></script>
 </head>
 <body>
@@ -41,6 +41,7 @@
 <li class=""><code>continue</code>: keep evaluating later routes and collect more matches</li>
 </ul>
 <p>This lets you compose behavior. For example, one <code>PutObject</code> can be applied to multiple matching routes if the earlier match uses <code>continue</code>.</p>
+<p>For write requests matched by multiple routes, every matched route must succeed. A later route failure is returned as failure rather than hiding behind an earlier success.</p>
 <h2 class="anchor anchorTargetStickyNavbar_T7vg" id="dispatch-modes">Dispatch Modes<a href="#dispatch-modes" class="hash-link" aria-label="Direct link to Dispatch Modes" title="Direct link to Dispatch Modes" translate="no">​</a></h2>
 <p>Each route also has a <code>dispatch</code> policy:</p>
 <ul>
@@ -53,7 +54,9 @@
 <li class="">writes can fan out</li>
 <li class="">reads never fan out</li>
 <li class="">if any destination fails during a fan-out write, the request fails</li>
-<li class="">the client gets the primary upstream response body rather than a generic proxy error body</li>
+<li class="">upstream HTTP failures preserve the primary upstream error response when available</li>
+<li class="">transport or replay failures return a proxy-generated failure</li>
+<li class="">fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back</li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_T7vg" id="read-preference">Read Preference<a href="#read-preference" class="hash-link" aria-label="Direct link to Read Preference" title="Direct link to Read Preference" translate="no">​</a></h2>
 <p>When a route has more than one destination, reads choose one effective backend using <code>read_preference</code>:</p>
