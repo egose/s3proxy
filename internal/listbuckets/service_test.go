@@ -78,3 +78,20 @@ func TestList_Sorted(t *testing.T) {
 		t.Errorf("expected last sorted bucket 'zebra', got %q", views[2].Name)
 	}
 }
+
+func TestListSnapshotsBucketsAtConstruction(t *testing.T) {
+	buckets := []config.VirtualBucket{
+		{Name: "a", VisibleName: "images"},
+	}
+	svc := New(buckets, time.Now())
+	buckets[0].VisibleName = "mutated"
+	buckets = append(buckets, config.VirtualBucket{Name: "b", VisibleName: "logs"})
+
+	views := svc.List(nil)
+	if got, want := len(views), 1; got != want {
+		t.Fatalf("len(views) = %d, want %d", got, want)
+	}
+	if got, want := views[0].Name, "images"; got != want {
+		t.Fatalf("views[0].Name = %q, want %q", got, want)
+	}
+}

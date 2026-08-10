@@ -124,8 +124,23 @@ services:
     entrypoint: >
       /bin/sh -c "
        mkdir -p /data/${FAKE_GCP_BUCKET};
-      /bin/fake-gcs-server -data /data -scheme http -port ${FAKE_GCP_PORT} -public-host localhost:${FAKE_GCP_PORT} -backend memory;
-      "
+       /bin/fake-gcs-server -data /data -scheme http -port ${FAKE_GCP_PORT} -public-host localhost:${FAKE_GCP_PORT} -backend memory;
+       "
+
+  s3-error:
+    <<: *common-props
+    container_name: s3proxy_s3_error
+    image: python:3.13-alpine
+    restart: always
+    ports:
+    - 18081:8080
+    command: >
+      python -c "from http.server import BaseHTTPRequestHandler, HTTPServer
+      class H(BaseHTTPRequestHandler):
+        def do_GET(self): self.send_response(500); self.end_headers(); self.wfile.write(b'<Error><Code>InternalError</Code></Error>')
+        def do_HEAD(self): self.send_response(500); self.end_headers()
+        def log_message(self, *args): pass
+      HTTPServer(('0.0.0.0', 8080), H).serve_forever()"
 
 volumes:
   s3proxy_minio:

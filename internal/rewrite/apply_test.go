@@ -15,17 +15,34 @@ func TestApply_StripPathPrefix(t *testing.T) {
 		Bucket:  "images",
 		Key:     "path/to/file.jpg",
 	}
-	route := config.Route{
-		Rewrite: config.RewriteRule{
-			StripPathPrefix: "/images",
-		},
+	rule := config.RewriteRule{
+		StripPathPrefix: "/images",
 	}
-	result, err := e.Apply(ctx, route, nil)
+	result, err := e.Apply(ctx, rule, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Key != "path/to/file.jpg" {
 		t.Errorf("expected key 'path/to/file.jpg', got %q", result.Key)
+	}
+}
+
+func TestApply_StripPathPrefixRequiresBoundary(t *testing.T) {
+	e := New()
+	ctx := &requestctx.Context{
+		RawPath: "/images-old/path/to/file.jpg",
+		Bucket:  "images-old",
+		Key:     "path/to/file.jpg",
+	}
+	rule := config.RewriteRule{
+		StripPathPrefix: "/images",
+	}
+	result, err := e.Apply(ctx, rule, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.Key, "path/to/file.jpg"; got != want {
+		t.Fatalf("Key = %q, want %q", got, want)
 	}
 }
 
@@ -35,12 +52,10 @@ func TestApply_PrependKeyPrefix(t *testing.T) {
 		Bucket: "mybucket",
 		Key:    "file.jpg",
 	}
-	route := config.Route{
-		Rewrite: config.RewriteRule{
-			PrependKeyPrefix: "assets/",
-		},
+	rule := config.RewriteRule{
+		PrependKeyPrefix: "assets/",
 	}
-	result, err := e.Apply(ctx, route, nil)
+	result, err := e.Apply(ctx, rule, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,12 +70,10 @@ func TestApply_BucketOverride(t *testing.T) {
 		Bucket: "original-bucket",
 		Key:    "file.jpg",
 	}
-	route := config.Route{
-		Rewrite: config.RewriteRule{
-			Bucket: "new-bucket",
-		},
+	rule := config.RewriteRule{
+		Bucket: "new-bucket",
 	}
-	result, err := e.Apply(ctx, route, nil)
+	result, err := e.Apply(ctx, rule, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +88,13 @@ func TestApply_KeyTemplate(t *testing.T) {
 		Bucket: "tenant-acme-logs",
 		Key:    "app.log",
 	}
-	route := config.Route{
-		Rewrite: config.RewriteRule{
-			Bucket:           "shared-logs",
-			KeyTemplate:      "{{ .Captures.tenant }}/{{ .Key }}",
-			CompiledTemplate: template.Must(template.New("key").Option("missingkey=error").Parse("{{ .Captures.tenant }}/{{ .Key }}")),
-		},
+	rule := config.RewriteRule{
+		Bucket:           "shared-logs",
+		KeyTemplate:      "{{ .Captures.tenant }}/{{ .Key }}",
+		CompiledTemplate: template.Must(template.New("key").Option("missingkey=error").Parse("{{ .Captures.tenant }}/{{ .Key }}")),
 	}
 	captures := map[string]string{"tenant": "acme"}
-	result, err := e.Apply(ctx, route, captures)
+	result, err := e.Apply(ctx, rule, captures)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,14 +112,12 @@ func TestApply_KeyTemplateMissingCaptureFails(t *testing.T) {
 		Bucket: "tenant-acme-logs",
 		Key:    "app.log",
 	}
-	route := config.Route{
-		Rewrite: config.RewriteRule{
-			Bucket:           "shared-logs",
-			KeyTemplate:      "{{ .Captures.tenant }}/{{ .Key }}",
-			CompiledTemplate: template.Must(template.New("key").Option("missingkey=error").Parse("{{ .Captures.tenant }}/{{ .Key }}")),
-		},
+	rule := config.RewriteRule{
+		Bucket:           "shared-logs",
+		KeyTemplate:      "{{ .Captures.tenant }}/{{ .Key }}",
+		CompiledTemplate: template.Must(template.New("key").Option("missingkey=error").Parse("{{ .Captures.tenant }}/{{ .Key }}")),
 	}
-	_, err := e.Apply(ctx, route, map[string]string{})
+	_, err := e.Apply(ctx, rule, map[string]string{})
 	if err == nil {
 		t.Fatal("expected key_template execution error")
 	}
@@ -121,14 +130,12 @@ func TestApply_StripAndPrepend(t *testing.T) {
 		Bucket:  "images",
 		Key:     "cat.jpg",
 	}
-	route := config.Route{
-		Rewrite: config.RewriteRule{
-			StripPathPrefix:  "/images",
-			PrependKeyPrefix: "assets/",
-			Bucket:           "images-store",
-		},
+	rule := config.RewriteRule{
+		StripPathPrefix:  "/images",
+		PrependKeyPrefix: "assets/",
+		Bucket:           "images-store",
 	}
-	result, err := e.Apply(ctx, route, nil)
+	result, err := e.Apply(ctx, rule, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +153,7 @@ func TestApply_EmptyBucketFails(t *testing.T) {
 		Bucket: "",
 		Key:    "file.jpg",
 	}
-	route := config.Route{}
-	_, err := e.Apply(ctx, route, nil)
+	_, err := e.Apply(ctx, config.RewriteRule{}, nil)
 	if err == nil {
 		t.Fatal("expected error for empty bucket")
 	}
@@ -159,8 +165,7 @@ func TestApply_NoRewrite(t *testing.T) {
 		Bucket: "mybucket",
 		Key:    "path/to/file.txt",
 	}
-	route := config.Route{}
-	result, err := e.Apply(ctx, route, nil)
+	result, err := e.Apply(ctx, config.RewriteRule{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

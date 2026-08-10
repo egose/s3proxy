@@ -67,6 +67,8 @@ Each route has an `on_match` policy:
 
 This lets you compose behavior. For example, one `PutObject` can be applied to multiple matching routes if the earlier match uses `continue`.
 
+For write requests matched by multiple routes, every matched route must succeed. A later route failure is returned as failure rather than hiding behind an earlier success.
+
 ## Dispatch Modes
 
 Each route also has a `dispatch` policy:
@@ -81,7 +83,9 @@ In v1:
 - writes can fan out
 - reads never fan out
 - if any destination fails during a fan-out write, the request fails
-- the client gets the primary upstream response body rather than a generic proxy error body
+- upstream HTTP failures preserve the primary upstream error response when available
+- transport or replay failures return a proxy-generated failure
+- fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back
 
 ## Read Preference
 

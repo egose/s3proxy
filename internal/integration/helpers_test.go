@@ -104,6 +104,32 @@ func signedRequest(t *testing.T, method, path string, body []byte, query url.Val
 	return doRequest(t, r)
 }
 
+func signedRequestWithHeaders(t *testing.T, method, path string, body []byte, query url.Values, headers http.Header) (*http.Response, []byte) {
+	t.Helper()
+	r := newProxyRequest(t, method, path, body, query)
+	for k, vals := range headers {
+		for _, v := range vals {
+			r.Header.Add(k, v)
+		}
+	}
+	if body != nil {
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	}
+	signRequest(t, r, body)
+	return doRequest(t, r)
+}
+
+func signedHostRequest(t *testing.T, method, host, path string, body []byte, query url.Values) (*http.Response, []byte) {
+	t.Helper()
+	r := newProxyRequest(t, method, path, body, query)
+	r.Host = host
+	if body != nil {
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	}
+	signRequest(t, r, body)
+	return doRequest(t, r)
+}
+
 func presignedRequest(t *testing.T, method, path string, query url.Values, signedAt time.Time, expires time.Duration) (*http.Response, []byte) {
 	t.Helper()
 	r := newProxyRequest(t, method, path, nil, query)

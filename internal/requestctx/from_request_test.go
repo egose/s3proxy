@@ -73,6 +73,57 @@ func TestFromRequest_VirtualHosted(t *testing.T) {
 	}
 }
 
+func TestFromRequest_VirtualHostedNormalizesHostAndBucket(t *testing.T) {
+	cfg := config.Addressing{
+		PathStyle:     true,
+		VirtualHosted: true,
+		HostSuffixes:  []string{"S3Proxy.Example.Com."},
+	}
+	r := &http.Request{
+		Host:   "MyBucket.S3Proxy.Example.Com.",
+		URL:    &url.URL{Path: "/path/to/object.txt"},
+		Method: "GET",
+		Header: http.Header{},
+	}
+	ctx, err := FromRequest(r, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ctx.Host, "mybucket.s3proxy.example.com"; got != want {
+		t.Fatalf("Host = %q, want %q", got, want)
+	}
+	if got, want := ctx.Bucket, "mybucket"; got != want {
+		t.Fatalf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := ctx.AddressingMode, AddressingVirtualHosted; got != want {
+		t.Fatalf("AddressingMode = %q, want %q", got, want)
+	}
+}
+
+func TestFromRequest_VirtualHostedTakesPrecedenceOverPathStyle(t *testing.T) {
+	cfg := config.Addressing{
+		PathStyle:     true,
+		VirtualHosted: true,
+		HostSuffixes:  []string{"s3proxy.example.com"},
+	}
+	r := &http.Request{
+		Host:   "hostbucket.s3proxy.example.com",
+		URL:    &url.URL{Path: "/pathbucket/object.txt"},
+		Method: "GET",
+		Header: http.Header{},
+	}
+	ctx, err := FromRequest(r, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ctx.Bucket, "hostbucket"; got != want {
+		t.Fatalf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := ctx.Key, "pathbucket/object.txt"; got != want {
+		t.Fatalf("Key = %q, want %q", got, want)
+	}
+}
+
 func TestFromRequest_BucketOnlyNoKey(t *testing.T) {
 	cfg := config.Addressing{PathStyle: true}
 	r := &http.Request{

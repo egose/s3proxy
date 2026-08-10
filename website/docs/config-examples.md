@@ -212,7 +212,7 @@ Use this when:
 
 - writes must land on every backend
 - reads can still prefer one backend
-- you have sized `listener.replay_body_max_bytes` for the largest write you expect to replay
+- you have sized `listener.replay_body_max_bytes` for the largest write you expect to replay and `listener.replay_body_aggregate_max_bytes` for expected concurrent replays
 
 ## Ordered Read Failover
 

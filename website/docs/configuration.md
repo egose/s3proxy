@@ -32,6 +32,7 @@ Think about the config in seven layers:
 listener "http" "public" {
   address = ":8080"
   replay_body_max_bytes = 33554432
+  replay_body_aggregate_max_bytes = 268435456
 
   addressing {
     path_style     = true
@@ -104,6 +105,7 @@ Important fields:
 - `address`
 - `max_header_bytes`
 - `replay_body_max_bytes`
+- `replay_body_aggregate_max_bytes`
 - `addressing.path_style`
 - `addressing.virtual_hosted`
 - `addressing.host_suffixes`
@@ -117,8 +119,9 @@ Notes:
 - only one `listener` block is supported
 - only `listener "http" ...` is supported in v1
 - enabling `virtual_hosted` requires at least one `host_suffix`
-- `replay_body_max_bytes` caps in-memory buffering when the proxy must replay a request body; `0` uses the default `32 MiB`
-- replay-bound requests fail with `413 EntityTooLarge` when the limit is exceeded
+- `replay_body_max_bytes` caps per-request buffering when the proxy must replay a request body; `0` uses the default `32 MiB`
+- `replay_body_aggregate_max_bytes` caps retained replay buffers across the process; `0` uses the default `256 MiB`
+- replay-bound requests fail with `413 EntityTooLarge` when the per-request limit is exceeded and `503 SlowDown` when the aggregate budget is exhausted
 
 ## Auth
 
@@ -243,6 +246,8 @@ Important route fields:
 - `on_match = "stop"` stops route evaluation after this match
 - `on_match = "continue"` keeps collecting matches
 
+For multi-destination writes and multi-route writes collected with `on_match = "continue"`, every selected destination or route must succeed. Upstream HTTP failures preserve the primary upstream error response when available; transport or replay failures return a proxy-generated failure.
+
 Supported `read_preference` values:
 
 - `first`
@@ -286,7 +291,7 @@ bucket "images" {
 }
 ```
 
-`visible_name` is what the client sees. `route` decides how requests for that bucket are handled.
+`visible_name` is what the client sees in virtual `ListBuckets` responses. `route` links that listed bucket to an existing route for policy validation; it does not create an additional request route by itself.
 
 ## Environment Variables
 

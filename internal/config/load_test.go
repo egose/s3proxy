@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -172,6 +173,83 @@ bucket "images_dup" {
 	_, err := LoadFile(writeTmpConfig(t, cfg))
 	if err == nil {
 		t.Fatal("expected error for duplicate visible bucket")
+	}
+}
+
+func TestValidate_AuthPolicyReferences(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "duplicate bucket label",
+			config: exampleConfig + `
+bucket "images" {
+  visible_name = "images-alt"
+  route        = "images_rw"
+}
+`,
+			wantErr: `duplicate bucket "images"`,
+		},
+		{
+			name:    "unknown allow route",
+			config:  strings.Replace(exampleConfig, `"route.images_rw"`, `"route.missing"`, 1),
+			wantErr: `auth "main": client "ci": allow_routes references unknown route "missing"`,
+		},
+		{
+			name: "invalid allow op",
+			config: strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `allow_ops = ["GetObject", "BogusOp"]
+
+    visible_buckets = ["images"]`, 1),
+			wantErr: `auth "main": client "ci": allow_ops contains unsupported operation "BogusOp"`,
+		},
+		{
+			name:    "unknown visible bucket",
+			config:  strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `visible_buckets = ["missing"]`, 1),
+			wantErr: `auth "main": client "ci": visible_buckets references unknown bucket "missing"`,
+		},
+		{
+			name:    "duplicate allow route",
+			config:  strings.Replace(exampleConfig, `"route.images_rw",`, `"route.images_rw", "route.images_rw",`, 1),
+			wantErr: `auth "main": client "ci": allow_routes contains duplicate entry "images_rw"`,
+		},
+		{
+			name: "duplicate allow op",
+			config: strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `allow_ops = ["GetObject", "GetObject"]
+
+    visible_buckets = ["images"]`, 1),
+			wantErr: `auth "main": client "ci": allow_ops contains duplicate entry "GetObject"`,
+		},
+		{
+			name:    "duplicate visible bucket",
+			config:  strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `visible_buckets = ["images", "images"]`, 1),
+			wantErr: `auth "main": client "ci": visible_buckets contains duplicate entry "images"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadFile(writeTmpConfig(t, tt.config))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidate_AuthPolicyAllowsWildcardReferences(t *testing.T) {
+	cfg := strings.Replace(exampleConfig, `allow_routes = [
+      "route.images_rw",
+    ]`, `allow_routes = ["*"]
+    allow_ops = ["*"]`, 1)
+	cfg = strings.Replace(cfg, `visible_buckets = ["images"]`, `visible_buckets = ["*"]`, 1)
+
+	if _, err := LoadFile(writeTmpConfig(t, cfg)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

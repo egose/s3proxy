@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/egose/s3proxy/internal/s3op"
 )
 
 func Validate(rt *Runtime) error {
@@ -24,6 +26,9 @@ func Validate(rt *Runtime) error {
 	if err := validateBuckets(rt.Buckets, rt.Routes); err != nil {
 		return err
 	}
+	if err := validateAuthPolicyRefs(rt.Auth, rt.Routes, rt.Buckets); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -36,6 +41,9 @@ func validateListener(l Listener) error {
 	}
 	if l.ReplayBodyMaxBytes < 0 {
 		return fmt.Errorf("listener.http %q: replay_body_max_bytes must be >= 0", l.Name)
+	}
+	if l.ReplayBodyAggregateMaxBytes < 0 {
+		return fmt.Errorf("listener.http %q: replay_body_aggregate_max_bytes must be >= 0", l.Name)
 	}
 	if l.Timeouts.Read < 0 || l.Timeouts.ReadHeader < 0 || l.Timeouts.Idle < 0 || l.Timeouts.Write < 0 {
 		return fmt.Errorf("listener.http %q: timeouts must be >= 0", l.Name)
@@ -183,11 +191,8 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 			return fmt.Errorf("route %q: at least one operation is required", r.Name)
 		}
 		for _, op := range r.Operations {
-			if !isValidOperation(op) {
+			if !s3op.IsConfigurable(op) {
 				return fmt.Errorf("route %q: unsupported operation %q", r.Name, op)
-			}
-			if op == "CopyObject" {
-				return fmt.Errorf("route %q: operation %q is not implemented", r.Name, op)
 			}
 			if r.Dispatch == DispatchAll && !supportsDispatchAllRouteOperation(op) {
 				return fmt.Errorf("route %q: dispatch %q does not support write operation %q", r.Name, r.Dispatch, op)
@@ -208,8 +213,13 @@ func validateBuckets(buckets []VirtualBucket, routes []Route) error {
 	for _, r := range routes {
 		routeNames[r.Name] = true
 	}
+	bucketNames := make(map[string]bool)
 	visibleNames := make(map[string]string)
 	for _, b := range buckets {
+		if bucketNames[b.Name] {
+			return fmt.Errorf("duplicate bucket %q", b.Name)
+		}
+		bucketNames[b.Name] = true
 		if b.VisibleName == "" {
 			return fmt.Errorf("bucket %q: visible_name is required", b.Name)
 		}
@@ -224,13 +234,74 @@ func validateBuckets(buckets []VirtualBucket, routes []Route) error {
 	return nil
 }
 
-func isValidOperation(op string) bool {
-	switch op {
-	case "GetObject", "HeadObject", "PutObject", "DeleteObject",
-		"HeadBucket", "ListObjectsV2", "ListBuckets", "CopyObject":
-		return true
+func validateAuthPolicyRefs(a Auth, routes []Route, buckets []VirtualBucket) error {
+	if a.Mode != AuthModeSigV4Static {
+		return nil
+	}
+	routeNames := make(map[string]bool, len(routes))
+	for _, r := range routes {
+		routeNames[r.Name] = true
+	}
+	bucketNames := make(map[string]bool, len(buckets))
+	for _, b := range buckets {
+		bucketNames[b.VisibleName] = true
+	}
+	for _, c := range a.Clients {
+		if err := validateClientStringRefs(a.Name, c.Name, "allow_routes", c.AllowRoutes, routeNames); err != nil {
+			return err
+		}
+		if err := validateClientOps(a.Name, c); err != nil {
+			return err
+		}
+		if err := validateClientStringRefs(a.Name, c.Name, "visible_buckets", c.VisibleBuckets, bucketNames); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateClientStringRefs(authName, clientName, field string, refs []string, known map[string]bool) error {
+	seen := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		if seen[ref] {
+			return fmt.Errorf("auth %q: client %q: %s contains duplicate entry %q", authName, clientName, field, ref)
+		}
+		seen[ref] = true
+		if ref == "*" {
+			continue
+		}
+		if !known[ref] {
+			return fmt.Errorf("auth %q: client %q: %s references unknown %s %q", authName, clientName, field, policyRefKind(field), ref)
+		}
+	}
+	return nil
+}
+
+func validateClientOps(authName string, c Client) error {
+	seen := make(map[string]bool, len(c.AllowOps))
+	for _, op := range c.AllowOps {
+		if seen[op] {
+			return fmt.Errorf("auth %q: client %q: allow_ops contains duplicate entry %q", authName, c.Name, op)
+		}
+		seen[op] = true
+		if op == "*" {
+			continue
+		}
+		if !s3op.IsConfigurable(op) {
+			return fmt.Errorf("auth %q: client %q: allow_ops contains unsupported operation %q", authName, c.Name, op)
+		}
+	}
+	return nil
+}
+
+func policyRefKind(field string) string {
+	switch field {
+	case "allow_routes":
+		return "route"
+	case "visible_buckets":
+		return "bucket"
 	default:
-		return false
+		return "reference"
 	}
 }
 

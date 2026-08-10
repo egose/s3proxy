@@ -14,8 +14,15 @@ import (
 )
 
 type Result struct {
-	Primary *s3.Response
-	Errors  map[string]error
+	Primary  *s3.Response
+	Errors   map[string]error
+	Attempts []Attempt
+}
+
+type Attempt struct {
+	Target     string
+	StatusCode int
+	Error      error
 }
 
 type Fanout interface {
@@ -27,12 +34,19 @@ func New(backend s3.Executor) Fanout {
 }
 
 func NewWithReplayLimit(backend s3.Executor, replayBodyMaxBytes int64) Fanout {
-	return &dispatcher{backend: backend, replayBodyMaxBytes: replayBodyMaxBytes}
+	return NewWithReplayBudget(backend, replaybody.NewBudget(replayBodyMaxBytes, replaybody.DefaultAggregateMaxBytes))
+}
+
+func NewWithReplayBudget(backend s3.Executor, replayBudget *replaybody.Budget) Fanout {
+	if replayBudget == nil {
+		replayBudget = replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes)
+	}
+	return &dispatcher{backend: backend, replayBudget: replayBudget}
 }
 
 type dispatcher struct {
-	backend            s3.Executor
-	replayBodyMaxBytes int64
+	backend      s3.Executor
+	replayBudget *replaybody.Budget
 }
 
 func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http.Request, op s3ops.Operation, rw rewrite.Result) (*Result, error) {
@@ -60,18 +74,22 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 			Source:    req,
 		})
 		if err != nil {
+			result.Attempts = append(result.Attempts, Attempt{Target: target.Name, Error: err})
 			return nil, err
 		}
+		result.Attempts = append(result.Attempts, Attempt{Target: target.Name, StatusCode: resp.StatusCode})
 		result.Primary = resp
 		return result, nil
 	}
 
-	if err := replaybody.EnsureWithLimit(req, d.replayBodyMaxBytes); err != nil {
+	if err := d.budget().Ensure(req); err != nil {
 		return nil, err
 	}
 
 	for i, dest := range match.Destinations {
 		if err := replaybody.Reset(req); err != nil {
+			s3.DrainAndClose(result.Primary)
+			result.Primary = nil
 			return nil, err
 		}
 
@@ -84,27 +102,27 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 		})
 		if err != nil {
 			result.Errors[dest.Name] = err
+			result.Attempts = append(result.Attempts, Attempt{Target: dest.Name, Error: err})
 			continue
 		}
+		attempt := Attempt{Target: dest.Name, StatusCode: resp.StatusCode}
 
 		if resp.StatusCode >= 400 {
-			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			attempt.Error = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			result.Errors[dest.Name] = attempt.Error
 		}
+		result.Attempts = append(result.Attempts, attempt)
 
 		if i == 0 {
 			result.Primary = resp
 		} else {
-			if resp.Body != nil {
-				resp.Body.Close()
-			}
+			s3.DrainAndClose(resp)
 		}
 	}
 
 	if len(result.Errors) > 0 {
 		if result.Primary != nil && result.Primary.StatusCode < 400 {
-			if result.Primary.Body != nil {
-				result.Primary.Body.Close()
-			}
+			s3.DrainAndClose(result.Primary)
 			result.Primary = nil
 		}
 		return result, fmt.Errorf("fan-out had %d failures", len(result.Errors))
@@ -113,12 +131,19 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 	return result, nil
 }
 
+func (d *dispatcher) budget() *replaybody.Budget {
+	if d.replayBudget != nil {
+		return d.replayBudget
+	}
+	return replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes)
+}
+
 func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result, match router.Match, req *http.Request, op s3ops.Operation, rw rewrite.Result) (*Result, error) {
 	if len(match.Destinations) == 0 {
 		return nil, fmt.Errorf("no destination available")
 	}
 
-	for _, dest := range match.Destinations {
+	for i, dest := range match.Destinations {
 		resp, err := d.backend.Do(ctx, s3.Request{
 			Operation: op,
 			Target:    dest,
@@ -128,18 +153,24 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 		})
 		if err != nil {
 			result.Errors[dest.Name] = err
+			result.Attempts = append(result.Attempts, Attempt{Target: dest.Name, Error: err})
 			continue
 		}
+		attempt := Attempt{Target: dest.Name, StatusCode: resp.StatusCode}
 
 		if resp.StatusCode >= http.StatusInternalServerError {
-			result.Errors[dest.Name] = fmt.Errorf("upstream returned status %d", resp.StatusCode)
-			if result.Primary != nil && result.Primary.Body != nil {
-				result.Primary.Body.Close()
+			attempt.Error = fmt.Errorf("upstream returned status %d", resp.StatusCode)
+			result.Errors[dest.Name] = attempt.Error
+			result.Attempts = append(result.Attempts, attempt)
+			if i < len(match.Destinations)-1 {
+				s3.DrainAndClose(resp)
+				continue
 			}
 			result.Primary = resp
 			continue
 		}
 
+		result.Attempts = append(result.Attempts, attempt)
 		result.Primary = resp
 		return result, nil
 	}
@@ -147,5 +178,5 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 	if result.Primary != nil {
 		return result, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
 	}
-	return nil, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
+	return result, fmt.Errorf("ordered failover exhausted %d destinations", len(result.Errors))
 }

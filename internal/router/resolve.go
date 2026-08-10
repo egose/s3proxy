@@ -24,9 +24,9 @@ type RouteResolver interface {
 
 func NewResolver(rt *config.Runtime) RouteResolver {
 	return &resolver{
-		routes:  rt.Routes,
-		parsers: rt.Parsers,
-		targets: rt.Targets,
+		routes:  cloneRoutes(rt.Routes),
+		parsers: cloneParsers(rt.Parsers),
+		targets: cloneTargets(rt.Targets),
 	}
 }
 
@@ -92,8 +92,6 @@ func (r *resolver) Resolve(ctx *requestctx.Context, op s3ops.Operation) ([]Match
 }
 
 func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]string, error) {
-	captures := make(map[string]string)
-
 	switch p.Kind {
 	case config.ParserPathPrefix:
 		// A path_prefix route matches a path either exactly equal to the
@@ -101,13 +99,13 @@ func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]str
 		// This prevents `/replica` accidentally matching `/replicate/...`,
 		// which otherwise surprises operators when route order is rotated.
 		if ctx.RawPath == p.Prefix || strings.HasPrefix(ctx.RawPath, p.Prefix+"/") {
-			return true, captures, nil
+			return true, nil, nil
 		}
 		return false, nil, nil
 
 	case config.ParserBucketExact:
 		if ctx.Bucket == p.Bucket {
-			return true, captures, nil
+			return true, nil, nil
 		}
 		return false, nil, nil
 
@@ -119,6 +117,7 @@ func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]str
 		if match == nil {
 			return false, nil, nil
 		}
+		captures := make(map[string]string)
 		for i, name := range p.Regex.SubexpNames() {
 			if i > 0 && name != "" && i < len(match) {
 				captures[name] = match[i]
@@ -128,7 +127,7 @@ func matchParser(p config.Parser, ctx *requestctx.Context) (bool, map[string]str
 
 	case config.ParserHostSuffix:
 		if hostMatchesSuffix(ctx.Host, p.Suffix) {
-			return true, captures, nil
+			return true, nil, nil
 		}
 		return false, nil, nil
 	}
@@ -196,4 +195,34 @@ func hashIndex(bucket, key string, n int) int {
 		idx = -idx
 	}
 	return idx % n
+}
+
+func cloneRoutes(routes []config.Route) []config.Route {
+	out := make([]config.Route, len(routes))
+	for i, route := range routes {
+		out[i] = route
+		out[i].Operations = append([]string(nil), route.Operations...)
+		out[i].DestinationRefs = append([]string(nil), route.DestinationRefs...)
+	}
+	return out
+}
+
+func cloneParsers(parsers map[string]config.Parser) map[string]config.Parser {
+	out := make(map[string]config.Parser, len(parsers))
+	for name, parser := range parsers {
+		out[name] = parser
+	}
+	return out
+}
+
+func cloneTargets(targets map[string]config.S3Target) map[string]config.S3Target {
+	out := make(map[string]config.S3Target, len(targets))
+	for name, target := range targets {
+		if target.EndpointURL != nil {
+			endpoint := *target.EndpointURL
+			target.EndpointURL = &endpoint
+		}
+		out[name] = target
+	}
+	return out
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/s3ops"
 )
 
@@ -26,6 +27,10 @@ type sigv4StaticAuthenticator struct {
 }
 
 func NewAuthenticator(cfg config.Auth) (Authenticator, error) {
+	return NewAuthenticatorWithReplayBudget(cfg, nil)
+}
+
+func NewAuthenticatorWithReplayBudget(cfg config.Auth, replayBudget *replaybody.Budget) (Authenticator, error) {
 	switch cfg.Mode {
 	case config.AuthModeNone:
 		return &noneAuthenticator{}, nil
@@ -35,7 +40,7 @@ func NewAuthenticator(cfg config.Auth) (Authenticator, error) {
 			clientsByAK[c.AccessKey] = c
 		}
 		return &sigv4StaticAuthenticator{
-			verifier: newSigV4Verifier(clientsByAK, "us-east-1"),
+			verifier: newSigV4Verifier(clientsByAK, "us-east-1", replayBudget),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported auth mode %q", cfg.Mode)
@@ -53,14 +58,21 @@ func (a *sigv4StaticAuthenticator) Authenticate(r *http.Request) (*Principal, er
 }
 
 type Authorizer interface {
+	AllowOperation(p *Principal, op s3ops.Operation) bool
 	AllowRoute(p *Principal, routeName string, op s3ops.Operation) bool
-	AllowBucketVisibility(p *Principal, visibleBucket string) bool
 }
 
 type staticAuthorizer struct{}
 
 func NewAuthorizer(cfg config.Auth) Authorizer {
 	return &staticAuthorizer{}
+}
+
+func (a *staticAuthorizer) AllowOperation(p *Principal, op s3ops.Operation) bool {
+	if p == nil {
+		return true
+	}
+	return matchOpList(p.AllowOps, op)
 }
 
 func (a *staticAuthorizer) AllowRoute(p *Principal, routeName string, op s3ops.Operation) bool {
@@ -71,13 +83,6 @@ func (a *staticAuthorizer) AllowRoute(p *Principal, routeName string, op s3ops.O
 		return true
 	}
 	return false
-}
-
-func (a *staticAuthorizer) AllowBucketVisibility(p *Principal, visibleBucket string) bool {
-	if p == nil {
-		return true
-	}
-	return matchStringList(p.VisibleBuckets, visibleBucket)
 }
 
 func matchStringList(allow []string, value string) bool {

@@ -109,5 +109,6 @@ The proxy returns an S3-compatible `NotImplemented` error for those requests ins
 
 - direct single-destination reads do not fail over anywhere else
 - `dispatch = "all"` writes must succeed on every destination
+- `on_match = "continue"` writes must succeed on every matched route
 - `ordered_failover` does not fail over on `404`, `NoSuchKey`, or `NoSuchBucket`
 - request paths preserve escaped bytes, so `%2F` remains distinct from `/`

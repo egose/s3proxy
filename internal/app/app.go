@@ -15,6 +15,7 @@ import (
 	"github.com/egose/s3proxy/internal/dispatch"
 	"github.com/egose/s3proxy/internal/httpapi"
 	"github.com/egose/s3proxy/internal/listbuckets"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
 )
@@ -26,23 +27,30 @@ const (
 	defaultUpstreamResponseHeaderTimeout = 30 * time.Second
 	defaultUpstreamExpectContinueTimeout = 1 * time.Second
 	defaultUpstreamIdleConnTimeout       = 90 * time.Second
+	defaultUpstreamMaxIdleConnsPerHost   = 32
 	defaultReadTimeout                   = 30 * time.Second
 	defaultMaxHeaderBytes                = 1 << 20
 )
 
 type BuildOptions struct {
-	ConfigPath string
-	Version    string
+	ConfigPath      string
+	Version         string
+	Logger          *slog.Logger
+	ShutdownTimeout time.Duration
 }
 
 type App struct {
-	Config *config.Runtime
-	Server *http.Server
+	server          *http.Server
+	transport       *http.Transport
+	logger          *slog.Logger
+	shutdownTimeout time.Duration
 }
 
 func Build(ctx context.Context, opts BuildOptions) (*App, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	}
 
 	rt, err := config.LoadFile(opts.ConfigPath)
 	if err != nil {
@@ -50,7 +58,9 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	}
 	logger.Info("config loaded", "routes", len(rt.Routes), "targets", len(rt.Targets), "auth_mode", rt.Auth.Mode)
 
-	authenticator, err := auth.NewAuthenticator(rt.Auth)
+	replayBudget := replaybody.NewBudget(rt.Listener.ReplayBodyMaxBytes, rt.Listener.ReplayBodyAggregateMaxBytes)
+
+	authenticator, err := auth.NewAuthenticatorWithReplayBudget(rt.Auth, replayBudget)
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
@@ -59,29 +69,19 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	resolver := router.NewResolver(rt)
 	rewriter := rewrite.New()
 
+	transport := newUpstreamTransport()
 	httpClient := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   defaultUpstreamDialTimeout,
-				KeepAlive: defaultUpstreamKeepAlive,
-			}).DialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       defaultUpstreamIdleConnTimeout,
-			TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
-			ExpectContinueTimeout: defaultUpstreamExpectContinueTimeout,
-			ResponseHeaderTimeout: defaultUpstreamResponseHeaderTimeout,
-		},
+		Transport: transport,
 	}
-	backend := s3.NewClientWithReplayLimit(httpClient, rt.Listener.ReplayBodyMaxBytes)
-	dispatcher := dispatch.NewWithReplayLimit(backend, rt.Listener.ReplayBodyMaxBytes)
+	backend := s3.NewClientWithReplayBudget(httpClient, replayBudget)
+	dispatcher := dispatch.NewWithReplayBudget(backend, replayBudget)
 
 	buckets := listbuckets.New(rt.Buckets, time.Now())
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Addressing:         rt.Listener.Addressing,
 		ReplayBodyMaxBytes: rt.Listener.ReplayBodyMaxBytes,
+		ReplayBudget:       replayBudget,
 		Authenticator:      authenticator,
 		Authorizer:         authorizer,
 		Router:             resolver,
@@ -114,31 +114,77 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 		server.MaxHeaderBytes = rt.Listener.MaxHeaderBytes
 	}
 
-	return &App{Config: rt, Server: server}, nil
+	shutdownTimeout := opts.ShutdownTimeout
+	if shutdownTimeout == 0 {
+		shutdownTimeout = 10 * time.Second
+	}
+	return &App{server: server, transport: transport, logger: logger, shutdownTimeout: shutdownTimeout}, nil
+}
+
+func newUpstreamTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   defaultUpstreamDialTimeout,
+			KeepAlive: defaultUpstreamKeepAlive,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   defaultUpstreamMaxIdleConnsPerHost,
+		IdleConnTimeout:       defaultUpstreamIdleConnTimeout,
+		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
+		ExpectContinueTimeout: defaultUpstreamExpectContinueTimeout,
+		ResponseHeaderTimeout: defaultUpstreamResponseHeaderTimeout,
+	}
+}
+
+func ValidateConfig(path string) error {
+	_, err := config.LoadFile(path)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	return nil
 }
 
 func (a *App) Run(ctx context.Context) error {
-	logger := slog.Default()
-	logger.Info("starting server", "address", a.Server.Addr)
+	addr := a.server.Addr
+	if addr == "" {
+		addr = ":http"
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	a.logger.Info("starting server", "address", a.server.Addr)
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := a.Server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
+		errCh <- a.server.Serve(ln)
 	}()
 
 	select {
 	case err := <-errCh:
-		return err
+		return normalizeServerError(err)
 	case <-ctx.Done():
-		logger.Info("shutting down server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		a.logger.Info("shutting down server")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
 		defer cancel()
-		if err := a.Server.Shutdown(shutdownCtx); err != nil {
+		if err := a.server.Shutdown(shutdownCtx); err != nil {
+			a.transport.CloseIdleConnections()
 			return fmt.Errorf("server shutdown: %w", err)
 		}
-		logger.Info("server stopped")
+		a.transport.CloseIdleConnections()
+		if err := normalizeServerError(<-errCh); err != nil {
+			return err
+		}
+		a.logger.Info("server stopped")
 		return nil
 	}
+}
+
+func normalizeServerError(err error) error {
+	if err == nil || err == http.ErrServerClosed {
+		return nil
+	}
+	return err
 }

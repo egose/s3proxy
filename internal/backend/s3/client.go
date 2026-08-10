@@ -37,33 +37,47 @@ func NewClient(httpClient *http.Client) Executor {
 }
 
 func NewClientWithReplayLimit(httpClient *http.Client, replayBodyMaxBytes int64) Executor {
-	return &client{httpClient: httpClient, replayBodyMaxBytes: replayBodyMaxBytes}
+	return NewClientWithReplayBudget(httpClient, replaybody.NewBudget(replayBodyMaxBytes, replaybody.DefaultAggregateMaxBytes))
+}
+
+func NewClientWithReplayBudget(httpClient *http.Client, replayBudget *replaybody.Budget) Executor {
+	if replayBudget == nil {
+		replayBudget = replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes)
+	}
+	return &client{httpClient: httpClient, replayBudget: replayBudget}
 }
 
 type client struct {
-	httpClient         *http.Client
-	replayBodyMaxBytes int64
+	httpClient   *http.Client
+	replayBudget *replaybody.Budget
 }
 
 func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
+	var cancel context.CancelFunc
 	if req.Target.Timeout > 0 {
-		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, req.Target.Timeout)
-		defer cancel()
+	}
+	cancelOnError := func() {
+		if cancel != nil {
+			cancel()
+		}
 	}
 
 	targetURL, err := buildTargetURL(req.Target, req.Bucket, req.Key, req.Source)
 	if err != nil {
+		cancelOnError()
 		return nil, fmt.Errorf("build target URL: %w", err)
 	}
 
 	body, getBody, contentLength, err := c.prepareSourceBody(req.Source)
 	if err != nil {
+		cancelOnError()
 		return nil, err
 	}
 
 	outReq, err := http.NewRequestWithContext(ctx, req.Source.Method, targetURL.String(), nil)
 	if err != nil {
+		cancelOnError()
 		return nil, fmt.Errorf("create outbound request: %w", err)
 	}
 	if body != nil {
@@ -78,8 +92,9 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	}
 	outReq.Host = targetURL.Host
 
+	connectionTokens := connectionHeaderTokens(req.Source.Header)
 	for key, vals := range req.Source.Header {
-		if !shouldForwardHeader(key, req.Source.Header) {
+		if !shouldForwardHeader(key, connectionTokens) {
 			continue
 		}
 		for _, v := range vals {
@@ -89,19 +104,48 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	outReq.Header.Set("Host", targetURL.Host)
 
 	if err := signRequest(outReq, req.Target); err != nil {
+		cancelOnError()
 		return nil, fmt.Errorf("sign outbound request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(outReq)
 	if err != nil {
+		cancelOnError()
 		return nil, fmt.Errorf("upstream request failed: %w", err)
+	}
+	respBody := resp.Body
+	if cancel != nil {
+		if respBody == nil {
+			cancel()
+		} else {
+			respBody = cancelOnCloseReadCloser{body: respBody, cancel: cancel}
+		}
 	}
 
 	return &Response{
 		StatusCode: resp.StatusCode,
 		Header:     resp.Header,
-		Body:       resp.Body,
+		Body:       respBody,
 	}, nil
+}
+
+type cancelOnCloseReadCloser struct {
+	body   io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r cancelOnCloseReadCloser) Read(p []byte) (int, error) {
+	n, err := r.body.Read(p)
+	if err != nil {
+		r.cancel()
+	}
+	return n, err
+}
+
+func (r cancelOnCloseReadCloser) Close() error {
+	err := r.body.Close()
+	r.cancel()
+	return err
 }
 
 func (c *client) prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io.ReadCloser, error), int64, error) {
@@ -112,7 +156,7 @@ func (c *client) prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io
 		return src.Body, nil, src.ContentLength, nil
 	}
 	if src.GetBody == nil {
-		if err := replaybody.EnsureWithLimit(src, c.replayBodyMaxBytes); err != nil {
+		if err := c.replayBudget.Ensure(src); err != nil {
 			return nil, nil, 0, err
 		}
 	}
@@ -231,10 +275,14 @@ func canonicalizeEscapedPath(value string) string {
 			b.WriteByte(c)
 			continue
 		}
-		b.WriteString(fmt.Sprintf("%%%02X", c))
+		b.WriteByte('%')
+		b.WriteByte(upperHex[c>>4])
+		b.WriteByte(upperHex[c&0x0f])
 	}
 	return b.String()
 }
+
+const upperHex = "0123456789ABCDEF"
 
 func isSafePathByte(c byte) bool {
 	if c == '/' || c == '-' || c == '_' || c == '.' || c == '~' {
@@ -256,13 +304,13 @@ func isHex(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-func shouldForwardHeader(name string, headers http.Header) bool {
-	if isHopByHopHeader(name, headers) {
+func shouldForwardHeader(name string, connectionTokens map[string]struct{}) bool {
+	if isHopByHopHeader(name, connectionTokens) {
 		return false
 	}
 	switch strings.ToLower(name) {
 	case "authorization", "x-amz-security-token", "x-amz-decoded-content-length",
-		"x-amz-content-sha256", "content-length":
+		"x-amz-content-sha256", "x-amz-date", "content-length":
 		return false
 	case "host":
 		return false
@@ -271,14 +319,14 @@ func shouldForwardHeader(name string, headers http.Header) bool {
 	}
 }
 
-func isHopByHopHeader(name string, headers http.Header) bool {
+func isHopByHopHeader(name string, connectionTokens map[string]struct{}) bool {
 	canonical := strings.ToLower(name)
 	switch canonical {
 	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 		"te", "trailer", "transfer-encoding", "upgrade":
 		return true
 	}
-	_, ok := connectionHeaderTokens(headers)[canonical]
+	_, ok := connectionTokens[canonical]
 	return ok
 }
 
