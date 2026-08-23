@@ -74,6 +74,7 @@ function CurrentColorModeIcon(): ReactNode {
   // This must work even before React hydrates
   return (
     <>
+
       <IconLightMode
         // a18y is handled at the button level,
         // not relying on button content (svg icons)
@@ -84,6 +85,7 @@ function CurrentColorModeIcon(): ReactNode {
       <IconDarkMode aria-hidden className={clsx(styles.toggleIcon, styles.darkToggleIcon)} />
 
       <IconSystemColorMode aria-hidden className={clsx(styles.toggleIcon, styles.systemToggleIcon)} />
+
     </>
   );
 }
@@ -92,6 +94,7 @@ function ColorModeToggle({ className, buttonClassName, respectPrefersColorScheme
   const isBrowser = useIsBrowser();
   return (
     <div className={clsx('h-10 w-10', className)}>
+
       <button
         className={clsx(
           'clean-btn',
@@ -114,8 +117,11 @@ function ColorModeToggle({ className, buttonClassName, respectPrefersColorScheme
         // - with this attribute, NVDA announces many times
         // aria-live="polite"
       >
+
         <CurrentColorModeIcon />
+
       </button>
+
     </div>
   );
 }

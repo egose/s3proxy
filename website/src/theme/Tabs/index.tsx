@@ -67,6 +67,7 @@ function TabList({ className }: { className?: string }) {
         className,
       )}
     >
+
       {tabValues.map(({ value, label, attributes }) => (
         <li
           // TODO extract TabListItem
@@ -89,9 +90,11 @@ function TabList({ className }: { className?: string }) {
             },
           )}
         >
-          {label ?? value}
+                    {label ?? value}
+
         </li>
       ))}
+
     </ul>
   );
 }
@@ -103,12 +106,14 @@ function TabContent({ children }: { children: ReactNode }) {
 function TabsContainer({ className, children }: { className?: string; children: ReactNode }): ReactNode {
   return (
     <div className={clsx(ThemeClassNames.tabs.container, 'tabs-container', 'my-6')}>
+
       <TabList
         // Surprising but historical
         // className is applied on TabList, not on TabsContainer
         className={className}
       />
-      <TabContent>{children}</TabContent>
+            <TabContent>{children}</TabContent>
+
     </div>
   );
 }
@@ -123,7 +128,8 @@ export default function Tabs(props: Props): ReactNode {
       // Temporary fix for https://github.com/facebook/docusaurus/issues/5653
       key={String(isBrowser)}
     >
-      <TabsContainer className={props.className}>{sanitizeTabsChildren(props.children)}</TabsContainer>
+            <TabsContainer className={props.className}>{sanitizeTabsChildren(props.children)}</TabsContainer>
+
     </TabsProvider>
   );
 }
