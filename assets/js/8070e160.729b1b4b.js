@@ -100,25 +100,18 @@ function _createMdxContent(props) {
         children: "an S3-compatible backend such as MinIO"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "backend credentials with access to a bucket you want to expose"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "a local checkout of this repo"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: ["either an installed ", (0,jsx_runtime.jsx)(_components.code, {
-          children: "s3proxy"
-        }), " binary or a local checkout of this repo"]
+        children: ["Go 1.26 or newer and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "make"
+        })]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "install",
       children: "Install"
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Install with ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "asdf"
-      }), ":"]
-    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
-      children: (0,jsx_runtime.jsx)(_components.code, {
-        className: "language-sh",
-        children: "asdf plugin add s3proxy\n# or\nasdf plugin add s3proxy https://github.com/egose/s3proxy.git\n\nasdf install s3proxy latest\nasdf global s3proxy latest\n"
-      })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "Or build from source:"
+      children: "Build from source:"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",

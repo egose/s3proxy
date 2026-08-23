@@ -135,7 +135,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n\n  addressing {\n    path_style     = true\n    virtual_hosted = false\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"writer\" {\n    access_key      = env(\"S3PROXY_CLIENT_WRITER_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_WRITER_SECRET_KEY\")\n    allow_routes    = [\"route.replicate_rw\"]\n    visible_buckets = [\"replicate\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ncredential \"static\" \"replica\" {\n  access_key = env(\"S3PROXY_TARGET_REPLICA_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_REPLICA_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"http://127.0.0.1:9000\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  credentials      = \"primary\"\n}\n\ntarget \"s3\" \"replica\" {\n  endpoint         = \"http://127.0.0.1:8333\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  credentials      = \"replica\"\n}\n\nparser \"path_prefix\" \"replicate_prefix\" {\n  prefix = \"/replicate\"\n}\n\nroute \"replicate_rw\" {\n  parser          = \"replicate_prefix\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\", \"replica\"]\n  dispatch        = \"all\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix = \"/replicate\"\n    bucket            = \"testbucket\"\n  }\n}\n\nbucket \"replicate\" {\n  visible_name = \"replicate\"\n  route        = \"replicate_rw\"\n}\n"
+        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n\n  addressing {\n    path_style     = true\n    virtual_hosted = false\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"writer\" {\n    access_key      = env(\"S3PROXY_CLIENT_WRITER_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_WRITER_SECRET_KEY\")\n    allow_routes    = [\"route.replicate_rw\"]\n    allow_ops       = [\"PutObject\", \"DeleteObject\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ncredential \"static\" \"replica\" {\n  access_key = env(\"S3PROXY_TARGET_REPLICA_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_REPLICA_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"http://127.0.0.1:9000\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  credentials      = \"primary\"\n}\n\ntarget \"s3\" \"replica\" {\n  endpoint         = \"http://127.0.0.1:8333\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  credentials      = \"replica\"\n}\n\nparser \"path_prefix\" \"replicate_prefix\" {\n  prefix = \"/replicate\"\n}\n\nroute \"replicate_rw\" {\n  parser          = \"replicate_prefix\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\", \"replica\"]\n  dispatch        = \"all\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix = \"/replicate\"\n    bucket            = \"testbucket\"\n  }\n}\n\nbucket \"replicate\" {\n  visible_name = \"replicate\"\n  route        = \"replicate_rw\"\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Use this when:"
@@ -155,9 +155,11 @@ function _createMdxContent(props) {
       id: "ordered-read-failover",
       children: "Ordered Read Failover"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["This prefers one backend for reads and falls back only on transport failure, timeout, or upstream ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["This prefers one backend for reads and falls back on upstream request errors or upstream ", (0,jsx_runtime.jsx)(_components.code, {
         children: "5xx"
-      }), "."]
+      }), ". It does not fail over on upstream ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "4xx"
+      }), " responses."]
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
@@ -175,7 +177,7 @@ function _createMdxContent(props) {
           children: "404"
         })]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "target timeout should bound failover latency"
+        children: "target timeout should bound failover latency, but it also limits the complete upstream response stream"
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "virtual-hosted-bucket-matching",

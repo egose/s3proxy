@@ -250,9 +250,11 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "It derives a normalized request context from host, path, query, and method."
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "It classifies the operation and rejects unsupported operations."
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "If auth is enabled, it validates the inbound SigV4 signature against configured client credentials."
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "It classifies the operation and resolves one or more matching routes."
+        children: "It resolves one or more matching routes."
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "It applies any configured bucket or key rewrites."
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
@@ -271,9 +273,7 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "Reads never fan out in v1. Even when a route has multiple destinations, one effective backend is selected per read."
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: ["For ", (0,jsx_runtime.jsx)(_components.code, {
-          children: "dispatch = \"all\""
-        }), ", write request bodies are buffered in memory before they are replayed to each destination, bounded by ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ["Request bodies are buffered in memory when replay is required, including fan-out writes, multi-route writes, concrete inbound SigV4 payload hashes, and unknown-length outbound bodies. Buffering is bounded by ", (0,jsx_runtime.jsx)(_components.code, {
           children: "listener.replay_body_max_bytes"
         }), " per request and ", (0,jsx_runtime.jsx)(_components.code, {
           children: "listener.replay_body_aggregate_max_bytes"
@@ -281,15 +281,17 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "ordered_failover"
-        }), " only fails over on transport errors, timeouts, and upstream ", (0,jsx_runtime.jsx)(_components.code, {
+        }), " advances on errors returned while preparing, signing, or sending the upstream request and on upstream ", (0,jsx_runtime.jsx)(_components.code, {
           children: "5xx"
         }), ". It does not fail over on ", (0,jsx_runtime.jsx)(_components.code, {
           children: "404"
         }), ", ", (0,jsx_runtime.jsx)(_components.code, {
           children: "NoSuchKey"
-        }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
           children: "NoSuchBucket"
-        }), "."]
+        }), ", or other upstream ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "4xx"
+        }), " responses."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "path_prefix"

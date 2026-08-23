@@ -98,16 +98,20 @@ function _createMdxContent(props) {
       id: "deployment-shape",
       children: "Deployment Shape"
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "The project ships as:"
+      children: "The project is built as:"
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["a single Go binary named ", (0,jsx_runtime.jsx)(_components.code, {
           children: "s3proxy"
         })]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: ["a container image built from the repo ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ["a container image built locally from the repo ", (0,jsx_runtime.jsx)(_components.code, {
           children: "Dockerfile"
         })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["versioned container images published as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ghcr.io/egose/s3proxy:<version>"
+        }), " when a release tag is published"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "The proxy exposes an HTTP S3-compatible endpoint. TLS termination is usually handled by an external load balancer or reverse proxy."
@@ -168,6 +172,16 @@ function _createMdxContent(props) {
         className: "language-yaml",
         children: "services:\n  s3proxy:\n    image: s3proxy:latest\n    ports:\n      - '8080:8080'\n    env_file:\n      - .env\n    volumes:\n      - ./config.hcl:/etc/s3proxy/config.hcl:ro\n    restart: unless-stopped\n"
       })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The example uses the image produced by ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "make docker-build"
+      }), "; it does not assume a public ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "latest"
+      }), " image."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Published GHCR images use semantic-version, major/minor, and major tags. The publishing workflow does not create a public ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "latest"
+      }), " tag."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "systemd",
       children: "systemd"
@@ -256,6 +270,22 @@ function _createMdxContent(props) {
           children: "ordered_failover"
         }), ", test those behaviors before production rollout."]
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "/healthz"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/readyz"
+      }), " are unauthenticated endpoints on the main listener. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/readyz"
+      }), " reports only that the process is serving requests; it does not probe target backends. Configure load-balancer health checks against ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/readyz"
+      }), ", and restrict access at the network or reverse-proxy layer if needed. The distroless image does not include a shell or HTTP client for an in-container health command."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The process handles ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "SIGINT"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "SIGTERM"
+      }), " with a 10-second graceful-shutdown window before active connections are forcibly closed. Configure service managers and orchestrators with a termination grace period longer than 10 seconds."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "production-recommendations",
       children: "Production Recommendations"
@@ -273,9 +303,11 @@ function _createMdxContent(props) {
           children: "timeout"
         }), " values when using ", (0,jsx_runtime.jsx)(_components.code, {
           children: "ordered_failover"
-        })]
+        }), ", accounting for the fact that the timeout covers the complete upstream response stream"]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "monitor memory usage if you fan out large writes"
+        children: "monitor memory usage for fan-out writes, multi-route writes, concrete SigV4 payload hashes, and unknown-length request bodies"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "collect the structured JSON logs written to stdout; no metrics endpoint is exposed in v1"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "validate config before every deploy"
       }), "\n"]

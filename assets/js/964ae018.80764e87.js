@@ -42,6 +42,10 @@ const toc = [{
   "id": "supported-operations",
   "level": 2
 }, {
+  "value": "Supported Query Keys",
+  "id": "supported-query-keys",
+  "level": 2
+}, {
   "value": "Addressing Modes",
   "id": "addressing-modes",
   "level": 2
@@ -242,6 +246,117 @@ function _createMdxContent(props) {
         })]
       })]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "supported-query-keys",
+      children: "Supported Query Keys"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The v1 API fails closed at request classification. A request with a query key outside the supported operation contract returns ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "NotImplemented"
+      }), " before route dispatch."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Inbound SigV4 presign query keys are accepted for authentication and are not forwarded to backends: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Algorithm"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Credential"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Date"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Expires"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Security-Token"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Signature"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-SignedHeaders"
+      }), "."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.table, {
+      children: [(0,jsx_runtime.jsx)(_components.thead, {
+        children: (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.th, {
+            children: "Operation"
+          }), (0,jsx_runtime.jsx)(_components.th, {
+            children: "Supported non-auth query keys"
+          })]
+        })
+      }), (0,jsx_runtime.jsxs)(_components.tbody, {
+        children: [(0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsxs)(_components.td, {
+            children: [(0,jsx_runtime.jsx)(_components.code, {
+              children: "GetObject"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "HeadObject"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "PutObject"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "DeleteObject"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "HeadBucket"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "ListBuckets"
+            })]
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["none, except optional AWS SDK ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "x-id"
+            }), " matching the operation name"]
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "ListObjectsV2"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: [(0,jsx_runtime.jsx)(_components.code, {
+              children: "list-type=2"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "continuation-token"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "delimiter"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "encoding-type"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "fetch-owner"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "max-keys"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "prefix"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "start-after"
+            }), ", and optional ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "x-id=ListObjectsV2"
+            })]
+          })]
+        })]
+      })]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Unsupported query operations include ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "acl"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "tagging"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "retention"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "legal-hold"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "torrent"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "versioning"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "versions"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "versionId"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "restore"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "select"
+      }), ", response header overrides such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "response-content-type"
+      }), ", and multipart variants such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "uploads"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "uploadId"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "partNumber"
+      }), "."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "addressing-modes",
       children: "Addressing Modes"
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
@@ -273,6 +388,12 @@ function _createMdxContent(props) {
       children: ["With ", (0,jsx_runtime.jsx)(_components.code, {
         children: "sigv4_static"
       }), ", the proxy verifies the inbound S3 SigV4 signature against statically configured clients."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Header-signed requests must sign ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "x-amz-date"
+      }), " and be within 15 minutes of the proxy clock. Presigned URLs may expire at most seven days after signing. Payload hashes may be omitted, use ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "UNSIGNED-PAYLOAD"
+      }), ", or contain a 64-character hexadecimal SHA-256 digest. Streaming SigV4 payload sentinels are not supported in v1."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "request-classification",
       children: "Request Classification"
@@ -295,7 +416,7 @@ function _createMdxContent(props) {
         })]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "GET /?list-type=2"
+          children: "GET /bucket?list-type=2"
         }), " can classify as ", (0,jsx_runtime.jsx)(_components.code, {
           children: "ListObjectsV2"
         })]
@@ -341,7 +462,9 @@ function _createMdxContent(props) {
         children: "bucket"
       }), " blocks and filtered by the authenticated client's ", (0,jsx_runtime.jsx)(_components.code, {
         children: "visible_buckets"
-      }), " policy. It does not call the backend to discover buckets."]
+      }), " policy. It does not call the backend to discover buckets or resolve a route. Adding ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListBuckets"
+      }), " to a route's operations therefore has no routing effect."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "listobjectsv2",
       children: (0,jsx_runtime.jsx)(_components.code, {
@@ -359,12 +482,10 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["For ", (0,jsx_runtime.jsx)(_components.code, {
         children: "read_preference = \"ordered_failover\""
-      }), ", failover happens only on:"]
+      }), ", the proxy tries the next destination on:"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "transport errors"
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "request timeouts"
+        children: "errors returned while preparing, signing, or sending the upstream request, including transport errors, request timeouts, and replay-limit errors"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["upstream ", (0,jsx_runtime.jsx)(_components.code, {
           children: "5xx"
@@ -385,6 +506,10 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.code, {
           children: "NoSuchBucket"
         })
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["any other upstream ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "4xx"
+        })]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "fan-out-writes",
@@ -422,6 +547,8 @@ function _createMdxContent(props) {
         }), "; aggregate replay-budget exhaustion fails with ", (0,jsx_runtime.jsx)(_components.code, {
           children: "503 SlowDown"
         })]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "at most four destination attempts run concurrently; additional destinations wait for a slot"
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["For writes matched by multiple routes through ", (0,jsx_runtime.jsx)(_components.code, {
@@ -464,10 +591,10 @@ function _createMdxContent(props) {
       children: "Health Endpoints"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
-        children: "GET /healthz"
+        children: "/healthz"
       }), " and ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "GET /readyz"
-      }), " are local process endpoints. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/readyz"
+      }), " are unauthenticated, method-agnostic process endpoints on the main S3 listener. Restrict them at the network or reverse-proxy layer if the listener is public. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "/readyz"
       }), " means the proxy process is serving requests; it does not poll configured backends or report destination health."]
     })]

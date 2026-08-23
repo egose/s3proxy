@@ -170,9 +170,11 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["For a route with ", (0,jsx_runtime.jsx)(_components.code, {
         children: "read_preference = \"ordered_failover\""
-      }), ", the proxy will try later destinations only on transport errors, timeouts, or upstream ", (0,jsx_runtime.jsx)(_components.code, {
+      }), ", the proxy tries later destinations on errors returned while preparing, signing, or sending the upstream request, including transport errors, timeouts, replay-limit errors, and upstream ", (0,jsx_runtime.jsx)(_components.code, {
         children: "5xx"
-      }), "."]
+      }), ". It does not fail over on an upstream ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "4xx"
+      }), " response."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "head-an-object",
       children: "Head An Object"
@@ -238,6 +240,26 @@ function _createMdxContent(props) {
       children: ["Multipart upload operations are not implemented in v1. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "CopyObject"
       }), " is also rejected."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["S3 subresource query operations are rejected before route dispatch unless they are part of the documented supported query surface. Examples include ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?acl"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?tagging"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?retention"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?legal-hold"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?versionId=..."
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?restore"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?select"
+      }), ", response header overrides, and multipart query variants such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?uploads"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?uploadId=..."
+      }), "."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The proxy returns an S3-compatible ", (0,jsx_runtime.jsx)(_components.code, {
         children: "NotImplemented"

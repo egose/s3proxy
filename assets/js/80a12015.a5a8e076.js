@@ -180,6 +180,12 @@ function _createMdxContent(props) {
       }), " can be applied to multiple matching routes if the earlier match uses ", (0,jsx_runtime.jsx)(_components.code, {
         children: "continue"
       }), "."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "continue"
+      }), " is valid only on write-only routes. Configuration validation rejects a ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "continue"
+      }), " route containing any read operation."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "For write requests matched by multiple routes, every matched route must succeed. A later route failure is returned as failure rather than hiding behind an earlier success."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
@@ -203,6 +209,20 @@ function _createMdxContent(props) {
       children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "dispatch = \"all\""
       }), " is for multi-destination writes such as replication."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["An ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "all"
+      }), " route must include ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "PutObject"
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "DeleteObject"
+      }), ". It may also include supported read operations, but those reads still use one destination according to ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "read_preference"
+      }), ". A write-only ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "all"
+      }), " route must use ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "read_preference = \"first\""
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "In v1:"
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
@@ -212,6 +232,8 @@ function _createMdxContent(props) {
         children: "reads never fan out"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "if any destination fails during a fan-out write, the request fails"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "at most four destination attempts run concurrently"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "upstream HTTP failures preserve the primary upstream error response when available"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
@@ -227,34 +249,32 @@ function _createMdxContent(props) {
         children: "read_preference"
       }), ":"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
-      children: ["\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: (0,jsx_runtime.jsx)(_components.code, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "first"
-        })
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: (0,jsx_runtime.jsx)(_components.code, {
+        }), ": select the first configured destination; this is the default"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "random"
-        })
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: (0,jsx_runtime.jsx)(_components.code, {
+        }), ": select a destination for each resolution"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "hash"
-        })
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: (0,jsx_runtime.jsx)(_components.code, {
+        }), ": deterministically select using the original inbound bucket and key before rewrites"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "ordered_failover"
-        })
+        }), ": try destinations in configuration order"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "ordered_failover"
       }), " is the safest choice when you want a preferred backend with a backup."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "Failover happens only on:"
+      children: "Failover advances on:"
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "transport errors"
-      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "request timeouts"
+        children: "errors returned while preparing, signing, or sending an upstream request, including transport errors, request timeouts, and replay-limit errors"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["upstream ", (0,jsx_runtime.jsx)(_components.code, {
           children: "5xx"
@@ -312,7 +332,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "route \"tenant_logs\" {\n  parser          = \"tenant_logs\"\n  operations      = [\"GetObject\", \"PutObject\", \"DeleteObject\", \"ListObjectsV2\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    bucket       = \"shared-logs\"\n    key_template = \"{{ .Captures.tenant }}/{{ .Key }}\"\n  }\n}\n"
+        children: "route \"tenant_logs\" {\n  parser          = \"tenant_logs\"\n  operations      = [\"GetObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    bucket       = \"shared-logs\"\n    key_template = \"{{ .Captures.tenant }}/{{ .Key }}\"\n  }\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Template data includes:"
@@ -330,6 +350,12 @@ function _createMdxContent(props) {
           children: "Captures"
         })
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Key rewrites change the outbound URL path; they do not translate into ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListObjectsV2"
+      }), " query parameters such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefix"
+      }), ". A listing route should normally leave its key empty and forward listing filters supplied by the client."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "strict-prefix-matching",
       children: "Strict Prefix Matching"
@@ -399,7 +425,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "route \"replica_failover_read\" {\n  parser          = \"failover_prefix\"\n  operations      = [\"GetObject\", \"HeadObject\"]\n  destinations    = [\"missing\", \"replica\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"ordered_failover\"\n}\n"
+        children: "route \"replica_failover_read\" {\n  parser          = \"failover_prefix\"\n  operations      = [\"GetObject\", \"HeadObject\"]\n  destinations    = [\"primary\", \"replica\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"ordered_failover\"\n}\n"
       })
     })]
   });

@@ -117,6 +117,16 @@ function _createMdxContent(props) {
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "serve"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "validate"
+      }), " also accept ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "-c"
+      }), " as shorthand for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--config"
+      }), ". These commands do not accept positional arguments."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "make build"
       }), " produces ", (0,jsx_runtime.jsx)(_components.code, {
         children: "dist/s3proxy"
@@ -155,8 +165,18 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "make vet\nmake test\nmake test-race\nmake cover\n"
+        children: "make vet\nmake test\nmake test-race\nmkdir -p dist\nmake cover\n"
       })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "make cover"
+      }), " writes ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dist/coverage.out"
+      }), ", so ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dist/"
+      }), " must already exist. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "make build"
+      }), " also creates it."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "The standard local sanity check is:"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
@@ -182,12 +202,30 @@ function _createMdxContent(props) {
         className: "language-sh",
         children: "cp .env.example .env\nmake sandbox-integration-up\n"
       })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The one-shot target tears down the proxy and sandbox after the tests. If setup fails before the tests begin, run ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "make sandbox-integration-down"
+      }), " to clean up any resources that were already started."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Iterative flow:"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "make sandbox-up DAEMON=true\nmake build\nmake test-integration\nmake test-integration-race\nmake sandbox-down\n"
+        children: "make sandbox-up DAEMON=true\nmake build\nset -a; . ./.env; set +a\n./dist/s3proxy serve --config sandbox/integration-config.hcl\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Keep the proxy running and use another terminal for repeated test runs:"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "set -a; . ./.env; set +a\nmake test-integration\nmake test-integration-race\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "When finished, stop the proxy and tear down the sandbox:"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "make sandbox-down\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "The sandbox stack exercises the proxy end to end against MinIO and SeaweedFS."
@@ -226,12 +264,12 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["target ", (0,jsx_runtime.jsx)(_components.code, {
           children: "timeout"
-        }), " directly affects failover timing for ", (0,jsx_runtime.jsx)(_components.code, {
+        }), " is a deadline for the complete upstream exchange, including streaming the response body, and also affects failover timing for ", (0,jsx_runtime.jsx)(_components.code, {
           children: "ordered_failover"
         })]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["If the per-request replay limit is exceeded, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["Replay buffering is used for fan-out writes, writes matched by multiple routes, inbound SigV4 requests with a concrete payload hash, and outbound requests whose body length is unknown. If the per-request replay limit is exceeded, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
         children: "413 EntityTooLarge"
       }), " instead of attempting the upstream request. If the process aggregate replay budget is exhausted, the proxy returns ", (0,jsx_runtime.jsx)(_components.code, {
         children: "503 SlowDown"
@@ -259,6 +297,14 @@ function _createMdxContent(props) {
       }), " and ", (0,jsx_runtime.jsx)(_components.code, {
         children: "make sandbox-logs-follow"
       }), " are the fastest way to inspect backend behavior."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The proxy writes structured JSON logs to stdout. Each request receives an ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Request-Id"
+      }), " response header; an inbound ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Request-Id"
+      }), " is preserved, otherwise the proxy generates one. Request completion records include the method, status, response bytes, and duration. Dispatch records include route, operation, target, status, and sanitized errors when applicable. There is no runtime setting for log level, format, or destination in v1."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "The proxy does not expose a Prometheus or other metrics endpoint in v1. Collect stdout logs and process or container metrics externally."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "suggested-local-checklist",
       children: "Suggested Local Checklist"

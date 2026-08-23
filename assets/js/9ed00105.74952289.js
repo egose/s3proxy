@@ -18,7 +18,7 @@ __webpack_require__.d(__webpack_exports__, {
 });
 
 ;// ./.docusaurus/docusaurus-plugin-content-docs/default/site-docs-configuration-md-9ed.json
-const site_docs_configuration_md_9ed_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"configuration","title":"Configuration","description":"s3proxy uses two-label HCL blocks. The core building blocks are:","source":"@site/docs/configuration.md","sourceDirName":".","slug":"/configuration","permalink":"/docs/configuration","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":3,"frontMatter":{"sidebar_position":3},"sidebar":"docsSidebar","previous":{"title":"Quickstart","permalink":"/docs/quickstart"},"next":{"title":"Config Examples","permalink":"/docs/config-examples"}}');
+const site_docs_configuration_md_9ed_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"configuration","title":"Configuration","description":"s3proxy uses labeled HCL blocks. Listener, credential, target, and parser blocks have a type and name label; auth, route, and bucket blocks have one name label. The core building blocks are:","source":"@site/docs/configuration.md","sourceDirName":".","slug":"/configuration","permalink":"/docs/configuration","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":3,"frontMatter":{"sidebar_position":3},"sidebar":"docsSidebar","previous":{"title":"Quickstart","permalink":"/docs/quickstart"},"next":{"title":"Config Examples","permalink":"/docs/config-examples"}}');
 // EXTERNAL MODULE: ./node_modules/.pnpm/react@19.2.6/node_modules/react/jsx-runtime.js
 var jsx_runtime = __webpack_require__(1325);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@mdx-js+react@3.1.1_@types+react@19.2.14_react@19.2.6/node_modules/@mdx-js/react/lib/index.js
@@ -109,7 +109,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "s3proxy"
-      }), " uses two-label HCL blocks. The core building blocks are:"]
+      }), " uses labeled HCL blocks. Listener, credential, target, and parser blocks have a type and name label; auth, route, and bucket blocks have one name label. The core building blocks are:"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsx)(_components.li, {
         children: (0,jsx_runtime.jsx)(_components.code, {
@@ -183,7 +183,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n  replay_body_max_bytes = 33554432\n  replay_body_aggregate_max_bytes = 268435456\n\n  addressing {\n    path_style     = true\n    virtual_hosted = true\n    host_suffixes  = [\"s3proxy.example.com\"]\n  }\n\n  timeouts {\n    read_header = \"10s\"\n    idle        = \"60s\"\n    write       = \"0s\"\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"ci\" {\n    access_key      = env(\"S3PROXY_CLIENT_CI_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_CI_SECRET_KEY\")\n    allow_routes    = [\"route.images_rw\"]\n    visible_buckets = [\"images\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"https://minio-a.internal\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  timeout          = \"5s\"\n  credentials      = \"primary\"\n}\n\nparser \"path_prefix\" \"images\" {\n  prefix = \"/images\"\n}\n\nroute \"images_rw\" {\n  parser          = \"images\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\", \"ListObjectsV2\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix  = \"/images\"\n    prepend_key_prefix = \"assets/\"\n    bucket             = \"images-store\"\n  }\n}\n\nbucket \"images\" {\n  visible_name = \"images\"\n  route        = \"images_rw\"\n}\n"
+        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n  replay_body_max_bytes = 33554432\n  replay_body_aggregate_max_bytes = 268435456\n\n  addressing {\n    path_style     = true\n    virtual_hosted = true\n    host_suffixes  = [\"s3proxy.example.com\"]\n  }\n\n  timeouts {\n    read_header = \"10s\"\n    idle        = \"60s\"\n    write       = \"0s\"\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"ci\" {\n    access_key      = env(\"S3PROXY_CLIENT_CI_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_CI_SECRET_KEY\")\n    allow_routes    = [\"route.images_rw\"]\n    visible_buckets = [\"images\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"https://minio-a.internal\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  timeout          = \"5s\"\n  credentials      = \"primary\"\n}\n\nparser \"path_prefix\" \"images\" {\n  prefix = \"/images\"\n}\n\nroute \"images_rw\" {\n  parser          = \"images\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix  = \"/images\"\n    prepend_key_prefix = \"assets/\"\n    bucket             = \"images-store\"\n  }\n}\n\nbucket \"images\" {\n  visible_name = \"images\"\n  route        = \"images_rw\"\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "listener",
@@ -250,10 +250,42 @@ function _createMdxContent(props) {
           children: "listener \"http\" ..."
         }), " is supported in v1"]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "address"
+        }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "addressing.path_style"
+        }), " are required"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["enabling ", (0,jsx_runtime.jsx)(_components.code, {
           children: "virtual_hosted"
         }), " requires at least one ", (0,jsx_runtime.jsx)(_components.code, {
           children: "host_suffix"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "max_header_bytes"
+        }), " defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "1 MiB"
+        }), "; ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0"
+        }), " also uses that default"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "timeouts.read"
+        }), " defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "30s"
+        }), "; omitting it or setting ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0s"
+        }), " retains that default"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "timeouts.read_header"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "timeouts.idle"
+        }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "timeouts.write"
+        }), " are disabled when omitted or set to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0s"
         })]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
@@ -278,6 +310,8 @@ function _createMdxContent(props) {
           children: "503 SlowDown"
         }), " when the aggregate budget is exhausted"]
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Replay buffering is used for fan-out writes, writes matched by multiple routes, inbound SigV4 requests with a concrete payload hash, and outbound requests whose body length is unknown."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "auth",
       children: "Auth"
@@ -327,12 +361,52 @@ function _createMdxContent(props) {
           children: "visible_buckets"
         })
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "access_key"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "secret_key"
+      }), " are required. Policy list defaults are intentionally asymmetric:"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["omitted or empty ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "allow_routes"
+        }), " denies every routed operation"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["omitted or empty ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "allow_ops"
+        }), " allows every supported operation"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["omitted or empty ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "visible_buckets"
+        }), " returns no buckets from virtual ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ListBuckets"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "\"*\""
+        }), " allows every known value for that policy field"]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Non-", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListBuckets"
+      }), " requests must match both ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "allow_routes"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "allow_ops"
+      }), ". ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListBuckets"
+      }), " checks ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "allow_ops"
+      }), " and filters its response through ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "visible_buckets"
+      }), "; it does not resolve a route."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Example:"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "auth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"admin\" {\n    access_key      = env(\"S3PROXY_CLIENT_ADMIN_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_ADMIN_SECRET_KEY\")\n    allow_routes    = [\"*\"]\n    visible_buckets = [\"*\"]\n  }\n}\n"
+        children: "auth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"admin\" {\n    access_key      = env(\"S3PROXY_CLIENT_ADMIN_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_ADMIN_SECRET_KEY\")\n    allow_routes    = [\"*\"]\n    allow_ops       = [\"*\"]\n    visible_buckets = [\"*\"]\n  }\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "credentials",
@@ -386,6 +460,24 @@ function _createMdxContent(props) {
       children: ["Only ", (0,jsx_runtime.jsx)(_components.code, {
         children: "target \"s3\" ..."
       }), " is supported in v1."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "endpoint"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "region"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "credentials"
+      }), " are required. The endpoint must be an absolute ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "http"
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "https"
+      }), " URL, and the credential reference must exist. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "force_path_style"
+      }), " defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "false"
+      }), ", which uses virtual-hosted outbound addressing. An omitted or zero ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "timeout"
+      }), " adds no whole-request target deadline; a positive value covers the complete upstream exchange, including streaming the response body. The shared upstream transport separately uses a 10-second dial timeout, 10-second TLS handshake timeout, and 30-second response-header timeout."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "parsers",
       children: "Parsers"
@@ -480,6 +572,38 @@ function _createMdxContent(props) {
         }), " keeps collecting matches"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "parser"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "operations"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "destinations"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dispatch"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "on_match"
+      }), " are required. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "read_preference"
+      }), " defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "first"
+      }), "."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "on_match = \"continue\""
+      }), " is valid only for write-only routes. A ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dispatch = \"all\""
+      }), " route must contain ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "PutObject"
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "DeleteObject"
+      }), "; it may also contain supported reads, which still use only one destination. For a write-only ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dispatch = \"all\""
+      }), " route, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "read_preference"
+      }), " must be ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "first"
+      }), "."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["For multi-destination writes and multi-route writes collected with ", (0,jsx_runtime.jsx)(_components.code, {
         children: "on_match = \"continue\""
       }), ", every selected destination or route must succeed. Upstream HTTP failures preserve the primary upstream error response when available; transport or replay failures return a proxy-generated failure."]
@@ -506,11 +630,25 @@ function _createMdxContent(props) {
         })
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["For ", (0,jsx_runtime.jsx)(_components.code, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "first"
+      }), " selects the first configured destination. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "random"
+      }), " selects a destination for each resolution. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "hash"
+      }), " deterministically selects from the original inbound bucket and key before rewrites. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "ordered_failover"
-      }), ", failover happens only on transport errors, timeouts, and upstream ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " starts with the first configured destination and tries later destinations on errors returned while preparing, signing, or sending the upstream request and on upstream ", (0,jsx_runtime.jsx)(_components.code, {
         children: "5xx"
-      }), " responses."]
+      }), " responses. It does not fail over on upstream ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "4xx"
+      }), " responses such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "404"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "NoSuchKey"
+      }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "NoSuchBucket"
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "rewrites",
       children: "Rewrites"
@@ -553,6 +691,14 @@ function _createMdxContent(props) {
       }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
         children: "Captures"
       }), "."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Key rewrites apply to the URL path. They do not rewrite ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListObjectsV2"
+      }), " query parameters such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefix"
+      }), ". Do not combine ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListObjectsV2"
+      }), " with a rewrite that turns its empty key into a non-empty path unless the backend intentionally supports that request shape."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "virtual-buckets",
       children: "Virtual Buckets"
@@ -572,7 +718,11 @@ function _createMdxContent(props) {
         children: "ListBuckets"
       }), " responses. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "route"
-      }), " links that listed bucket to an existing route for policy validation; it does not create an additional request route by itself."]
+      }), " must reference an existing route, but it is used only for configuration referential integrity. It does not create a request route or couple bucket visibility to route authorization."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Although ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListBuckets"
+      }), " is accepted as an operation name during route validation, it is handled before route resolution. Adding it to a route has no routing effect."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "environment-variables",
       children: "Environment Variables"
@@ -580,6 +730,8 @@ function _createMdxContent(props) {
       children: ["Use ", (0,jsx_runtime.jsx)(_components.code, {
         children: "env(\"VAR\")"
       }), " anywhere a string is allowed. The value is textually inlined before HCL parsing."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "An unset variable is replaced with an empty string. There is no separate missing-variable diagnostic; required-field validation may reject the resulting value, while optional string fields may remain empty."
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["For local runs, load ", (0,jsx_runtime.jsx)(_components.code, {
         children: ".env"
@@ -617,6 +769,20 @@ function _createMdxContent(props) {
         children: "routes that reference unknown parsers or destinations"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "invalid operation names or read preferences"
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "duplicate route operations or destinations"
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "on_match = \"continue\""
+        }), " on a route that is not write-only"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "dispatch = \"all\""
+        }), " without ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PutObject"
+        }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "DeleteObject"
+        })]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "sigv4_static"
