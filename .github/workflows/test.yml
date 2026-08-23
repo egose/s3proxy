@@ -23,8 +23,10 @@ jobs:
     - name: go build (host)
       run: make build
 
-    - name: go build (all targets)
-      run: make build-all
+    - name: go build and archive (all targets)
+      run: |
+        make build-all
+        make build-archive
 
   unit-test:
     runs-on: ubuntu-24.04
