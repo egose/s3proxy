@@ -8,10 +8,11 @@ This page covers practical ways to run `s3proxy` in local, containerized, and se
 
 ## Deployment Shape
 
-The project ships as:
+The project is built as:
 
 - a single Go binary named `s3proxy`
-- a container image built from the repo `Dockerfile`
+- a container image built locally from the repo `Dockerfile`
+- versioned container images published as `ghcr.io/egose/s3proxy:<version>` when a release tag is published
 
 The proxy exposes an HTTP S3-compatible endpoint. TLS termination is usually handled by an external load balancer or reverse proxy.
 
@@ -75,6 +76,10 @@ services:
     restart: unless-stopped
 ```
 
+The example uses the image produced by `make docker-build`; it does not assume a public `latest` image.
+
+Published GHCR images use semantic-version, major/minor, and major tags. The publishing workflow does not create a public `latest` tag.
+
 ## systemd
 
 Example unit file:
@@ -136,11 +141,16 @@ Before rollout:
 4. Exercise one read path and one write path through the proxy.
 5. If using `dispatch = "all"` or `ordered_failover`, test those behaviors before production rollout.
 
+`/healthz` and `/readyz` are unauthenticated endpoints on the main listener. `/readyz` reports only that the process is serving requests; it does not probe target backends. Configure load-balancer health checks against `/readyz`, and restrict access at the network or reverse-proxy layer if needed. The distroless image does not include a shell or HTTP client for an in-container health command.
+
+The process handles `SIGINT` and `SIGTERM` with a 10-second graceful-shutdown window before active connections are forcibly closed. Configure service managers and orchestrators with a termination grace period longer than 10 seconds.
+
 ## Production Recommendations
 
 - use `sigv4_static` unless the deployment is fully trusted
 - keep client credentials separate from backend target credentials
 - mount config files read-only
-- set explicit target `timeout` values when using `ordered_failover`
-- monitor memory usage if you fan out large writes
+- set explicit target `timeout` values when using `ordered_failover`, accounting for the fact that the timeout covers the complete upstream response stream
+- monitor memory usage for fan-out writes, multi-route writes, concrete SigV4 payload hashes, and unknown-length request bodies
+- collect the structured JSON logs written to stdout; no metrics endpoint is exposed in v1
 - validate config before every deploy

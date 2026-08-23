@@ -25,6 +25,8 @@ s3proxy validate --config /etc/s3proxy/config.hcl
 s3proxy version
 ```
 
+`serve` and `validate` also accept `-c` as shorthand for `--config`. These commands do not accept positional arguments.
+
 `make build` produces `dist/s3proxy` for the host platform with CGO disabled.
 
 ## Environment Variables
@@ -54,8 +56,11 @@ The image mounts the config file and runs the same CLI entrypoint as the local b
 make vet
 make test
 make test-race
+mkdir -p dist
 make cover
 ```
+
+`make cover` writes `dist/coverage.out`, so `dist/` must already exist. `make build` also creates it.
 
 The standard local sanity check is:
 
@@ -76,13 +81,28 @@ cp .env.example .env
 make sandbox-integration-up
 ```
 
+The one-shot target tears down the proxy and sandbox after the tests. If setup fails before the tests begin, run `make sandbox-integration-down` to clean up any resources that were already started.
+
 Iterative flow:
 
 ```sh
 make sandbox-up DAEMON=true
 make build
+set -a; . ./.env; set +a
+./dist/s3proxy serve --config sandbox/integration-config.hcl
+```
+
+Keep the proxy running and use another terminal for repeated test runs:
+
+```sh
+set -a; . ./.env; set +a
 make test-integration
 make test-integration-race
+```
+
+When finished, stop the proxy and tear down the sandbox:
+
+```sh
 make sandbox-down
 ```
 
@@ -112,9 +132,9 @@ Important operational behaviors:
 - config changes require a restart; there is no hot reload in v1
 - request bodies that need replay are buffered in memory up to `listener.replay_body_max_bytes` per request and `listener.replay_body_aggregate_max_bytes` across the process
 - reads use one effective backend even when a route has multiple destinations
-- target `timeout` directly affects failover timing for `ordered_failover`
+- target `timeout` is a deadline for the complete upstream exchange, including streaming the response body, and also affects failover timing for `ordered_failover`
 
-If the per-request replay limit is exceeded, the proxy returns `413 EntityTooLarge` instead of attempting the upstream request. If the process aggregate replay budget is exhausted, the proxy returns `503 SlowDown` immediately instead of blocking request goroutines.
+Replay buffering is used for fan-out writes, writes matched by multiple routes, inbound SigV4 requests with a concrete payload hash, and outbound requests whose body length is unknown. If the per-request replay limit is exceeded, the proxy returns `413 EntityTooLarge` instead of attempting the upstream request. If the process aggregate replay budget is exhausted, the proxy returns `503 SlowDown` immediately instead of blocking request goroutines.
 
 ## Logging And Diagnostics
 
@@ -126,6 +146,10 @@ Use `s3proxy validate --config ...` before rollouts to catch configuration error
 - invalid auth mode or missing clients
 
 For integration troubleshooting, `make sandbox-logs` and `make sandbox-logs-follow` are the fastest way to inspect backend behavior.
+
+The proxy writes structured JSON logs to stdout. Each request receives an `X-Request-Id` response header; an inbound `X-Request-Id` is preserved, otherwise the proxy generates one. Request completion records include the method, status, response bytes, and duration. Dispatch records include route, operation, target, status, and sanitized errors when applicable. There is no runtime setting for log level, format, or destination in v1.
+
+The proxy does not expose a Prometheus or other metrics endpoint in v1. Collect stdout logs and process or container metrics externally.
 
 ## Suggested Local Checklist
 

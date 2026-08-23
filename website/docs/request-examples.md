@@ -51,7 +51,7 @@ aws --endpoint-url "$S3_ENDPOINT" s3api get-object \
   ./cat.out.jpg
 ```
 
-For a route with `read_preference = "ordered_failover"`, the proxy will try later destinations only on transport errors, timeouts, or upstream `5xx`.
+For a route with `read_preference = "ordered_failover"`, the proxy tries later destinations on errors returned while preparing, signing, or sending the upstream request, including transport errors, timeouts, replay-limit errors, and upstream `5xx`. It does not fail over on an upstream `4xx` response.
 
 ## Head An Object
 
@@ -102,6 +102,8 @@ Authorization: AWS4-HMAC-SHA256 ...
 ## Unsupported Operations
 
 Multipart upload operations are not implemented in v1. `CopyObject` is also rejected.
+
+S3 subresource query operations are rejected before route dispatch unless they are part of the documented supported query surface. Examples include `?acl`, `?tagging`, `?retention`, `?legal-hold`, `?versionId=...`, `?restore`, `?select`, response header overrides, and multipart query variants such as `?uploads` and `?uploadId=...`.
 
 The proxy returns an S3-compatible `NotImplemented` error for those requests instead of attempting partial support.
 

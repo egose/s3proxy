@@ -156,7 +156,7 @@ auth "main" {
     access_key      = env("S3PROXY_CLIENT_WRITER_ACCESS_KEY")
     secret_key      = env("S3PROXY_CLIENT_WRITER_SECRET_KEY")
     allow_routes    = ["route.replicate_rw"]
-    visible_buckets = ["replicate"]
+    allow_ops       = ["PutObject", "DeleteObject"]
   }
 }
 
@@ -216,7 +216,7 @@ Use this when:
 
 ## Ordered Read Failover
 
-This prefers one backend for reads and falls back only on transport failure, timeout, or upstream `5xx`.
+This prefers one backend for reads and falls back on upstream request errors or upstream `5xx`. It does not fail over on upstream `4xx` responses.
 
 ```hcl
 listener "http" "public" {
@@ -292,7 +292,7 @@ Use this when:
 
 - you want a preferred backend and a warm backup
 - `404` from the primary should stay a `404`
-- target timeout should bound failover latency
+- target timeout should bound failover latency, but it also limits the complete upstream response stream
 
 ## Virtual-Hosted Bucket Matching
 

@@ -1,12 +1,16 @@
 package replaybody
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type closeTrackingBody struct {
@@ -174,10 +178,11 @@ func TestResetAndGetBodyError(t *testing.T) {
 
 func TestReleaseReturnsBudgetAndClearsReplay(t *testing.T) {
 	budget := NewBudget(10, 10)
-	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", io.NopCloser(strings.NewReader("payload")))
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.ContentLength = int64(len("payload"))
 	if err := budget.Ensure(req); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +195,174 @@ func TestReleaseReturnsBudgetAndClearsReplay(t *testing.T) {
 	if req.GetBody != nil {
 		t.Fatal("GetBody was not cleared")
 	}
+}
+
+func TestReleaseIsIdempotentAndAcquiredReadersRemainValid(t *testing.T) {
+	budget := NewBudget(100, 100)
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Ensure(req); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := req.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(req); err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(req); err != nil {
+		t.Fatal(err)
+	}
+	if budget.Used() != 0 {
+		t.Fatalf("used = %d, want 0", budget.Used())
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "payload" {
+		t.Fatalf("body = %q, want payload", string(data))
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if budget.Used() != 0 {
+		t.Fatalf("used after acquired reader close = %d, want 0", budget.Used())
+	}
+}
+
+func TestConcurrentGetBodyCancelBodyCloseAndRelease(t *testing.T) {
+	const iterations = 100
+	for i := 0; i < iterations; i++ {
+		budget := NewBudget(4096, 4096)
+		ctx, cancel := context.WithCancel(context.Background())
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://proxy.local/bucket/key", io.NopCloser(strings.NewReader(strings.Repeat("x", 1024))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.ContentLength = 1024
+		if err := budget.Ensure(req); err != nil {
+			t.Fatal(err)
+		}
+		getBody := req.GetBody
+		body := req.Body
+		var wg sync.WaitGroup
+		for j := 0; j < 8; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				reader, err := getBody()
+				if err != nil {
+					t.Errorf("GetBody error = %v", err)
+					return
+				}
+				data, err := io.ReadAll(reader)
+				if err != nil {
+					t.Errorf("ReadAll error = %v", err)
+				}
+				if len(data) != 1024 {
+					t.Errorf("len(data) = %d, want 1024", len(data))
+				}
+				if err := reader.Close(); err != nil {
+					t.Errorf("reader close error = %v", err)
+				}
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cancel()
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := body.Close(); err != nil {
+				t.Errorf("body close error = %v", err)
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := Release(req); err != nil {
+				t.Errorf("release error = %v", err)
+			}
+		}()
+		wg.Wait()
+		if budget.Used() != 0 {
+			t.Fatalf("used = %d, want 0", budget.Used())
+		}
+	}
+}
+
+func TestEnsureCancellationDuringSlowUploadReleasesAndCloses(t *testing.T) {
+	budget := NewBudget(64*1024, 64*1024)
+	body := newSlowCancelableBody(bytes.Repeat([]byte("x"), 1024))
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://proxy.local/bucket/key", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = -1
+
+	done := make(chan error, 1)
+	go func() {
+		done <- budget.Ensure(req)
+	}()
+
+	select {
+	case <-body.firstRead:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first upload chunk")
+	}
+	if budget.Used() == 0 {
+		t.Fatal("expected a partial reservation before cancellation")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for cancellation")
+	}
+	if !body.closed.Load() {
+		t.Fatal("original body was not closed")
+	}
+	if budget.Used() != 0 {
+		t.Fatalf("used = %d, want 0", budget.Used())
+	}
+}
+
+func TestKnownLengthReplayUsesExactPayloadAllocation(t *testing.T) {
+	budget := NewBudget(1<<20, 1<<20)
+	payload := strings.Repeat("x", 1<<20)
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", io.NopCloser(strings.NewReader(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = int64(len(payload))
+	if err := budget.Ensure(req); err != nil {
+		t.Fatal(err)
+	}
+	replay, ok := req.Body.(*replayReadCloser)
+	if !ok {
+		t.Fatalf("body type = %T, want replayReadCloser", req.Body)
+	}
+	if replay.payload.body == nil {
+		t.Fatal("known length body was not stored contiguously")
+	}
+	if got, want := cap(replay.payload.body), len(payload); got != want {
+		t.Fatalf("payload cap = %d, want %d", got, want)
+	}
+	if len(replay.payload.chunks) != 0 {
+		t.Fatalf("chunks = %d, want 0", len(replay.payload.chunks))
+	}
+	Release(req)
 }
 
 func TestConcurrentReservationsCannotExceedAggregateBudget(t *testing.T) {
@@ -237,4 +410,35 @@ func TestDefaultLimit(t *testing.T) {
 	if budget.maxRequestBytes != DefaultMaxBytes {
 		t.Fatalf("maxRequestBytes = %d, want %d", budget.maxRequestBytes, DefaultMaxBytes)
 	}
+}
+
+type slowCancelableBody struct {
+	payload   []byte
+	firstRead chan struct{}
+	closed    atomic.Bool
+	closeOnce sync.Once
+	closeCh   chan struct{}
+}
+
+func newSlowCancelableBody(payload []byte) *slowCancelableBody {
+	return &slowCancelableBody{payload: payload, firstRead: make(chan struct{}), closeCh: make(chan struct{})}
+}
+
+func (b *slowCancelableBody) Read(p []byte) (int, error) {
+	if b.payload != nil {
+		n := copy(p, b.payload)
+		b.payload = nil
+		close(b.firstRead)
+		return n, nil
+	}
+	<-b.closeCh
+	return 0, errors.New("closed")
+}
+
+func (b *slowCancelableBody) Close() error {
+	b.closed.Store(true)
+	b.closeOnce.Do(func() {
+		close(b.closeCh)
+	})
+	return nil
 }

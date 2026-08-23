@@ -296,6 +296,90 @@ func TestPresignedGet_Expired(t *testing.T) {
 	assertBodyContains(t, respBody, "AccessDenied")
 }
 
+func TestPresignedGet_TamperingRejected(t *testing.T) {
+	waitForReady(t, 60*time.Second)
+	tests := []struct {
+		name    string
+		request func() *http.Request
+		mutate  func(*http.Request)
+	}{
+		{
+			name: "signature",
+			request: func() *http.Request {
+				return newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+			},
+			mutate: func(r *http.Request) {
+				q := r.URL.Query()
+				q.Set("X-Amz-Signature", strings.Repeat("a", 64))
+				r.URL.RawQuery = q.Encode()
+			},
+		},
+		{
+			name: "path",
+			request: func() *http.Request {
+				return newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+			},
+			mutate: func(r *http.Request) {
+				r.URL.Path = "/primary/tampered-" + randHex(8)
+			},
+		},
+		{
+			name: "query",
+			request: func() *http.Request {
+				return newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+			},
+			mutate: func(r *http.Request) {
+				q := r.URL.Query()
+				q.Set("response-content-type", "text/plain")
+				r.URL.RawQuery = q.Encode()
+			},
+		},
+		{
+			name: "signed header",
+			request: func() *http.Request {
+				r := newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+				r.Header.Set("Range", "bytes=0-1")
+				return r
+			},
+			mutate: func(r *http.Request) {
+				r.Header.Set("Range", "bytes=1-2")
+			},
+		},
+		{
+			name: "algorithm",
+			request: func() *http.Request {
+				return newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+			},
+			mutate: func(r *http.Request) {
+				q := r.URL.Query()
+				q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA1")
+				r.URL.RawQuery = q.Encode()
+			},
+		},
+		{
+			name: "duplicate signature",
+			request: func() *http.Request {
+				return newProxyRequest(t, http.MethodGet, "/primary/does-not-exist-"+randHex(8), nil, nil)
+			},
+			mutate: func(r *http.Request) {
+				q := r.URL.Query()
+				q.Add("X-Amz-Signature", q.Get("X-Amz-Signature"))
+				r.URL.RawQuery = q.Encode()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := tt.request()
+			signPresignedRequest(t, r, time.Now().UTC(), 10*time.Minute)
+			tt.mutate(r)
+			resp, respBody := doRequest(t, r)
+			assertStatus(t, resp, respBody, 403)
+		})
+	}
+}
+
 func TestMultipartAndCopyObjectRejected(t *testing.T) {
 	waitForReady(t, 60*time.Second)
 	key := "unsupported-" + randHex(8)

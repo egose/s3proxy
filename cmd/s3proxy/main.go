@@ -34,10 +34,7 @@ func newServeCommand() *cobra.Command {
 		Short: "Run the S3 proxy server",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := app.Build(context.Background(), app.BuildOptions{
-				ConfigPath: cfgPath,
-				Version:    version,
-			})
+			a, err := app.Build(app.BuildOptions{ConfigPath: cfgPath})
 			if err != nil {
 				return err
 			}

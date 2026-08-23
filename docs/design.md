@@ -105,6 +105,10 @@ Initial operation support for v1:
 - `ListObjectsV2`
 - `ListBuckets`
 
+The operation classifier also owns the v1 query contract. Supported object, bucket-head, and virtual bucket-list operations accept no non-auth query keys except an optional AWS SDK `x-id` whose value matches the classified operation name. `ListObjectsV2` accepts `list-type=2`, `continuation-token`, `delimiter`, `encoding-type`, `fetch-owner`, `max-keys`, `prefix`, `start-after`, and optional `x-id=ListObjectsV2`.
+
+Inbound SigV4 presign query keys are accepted for authentication and stripped before outbound signing. Every other query-key combination is unsupported and must be rejected before route dispatch, including ACL, tagging, retention, legal-hold, torrent, versioning and version IDs, restore, select, response-header overrides, and multipart query variants.
+
 Multipart-related operations are explicitly unsupported in v1 and should return an S3-compatible `NotImplemented` error.
 
 ## Authentication And Authorization

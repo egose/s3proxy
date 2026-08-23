@@ -63,18 +63,19 @@ Multipart-related operations and `CopyObject` return an S3-compatible `NotImplem
 
 1. The proxy receives an S3-compatible HTTP request.
 2. It derives a normalized request context from host, path, query, and method.
-3. If auth is enabled, it validates the inbound SigV4 signature against configured client credentials.
-4. It classifies the operation and resolves one or more matching routes.
-5. It applies any configured bucket or key rewrites.
-6. It builds outbound S3 requests to the selected target backends.
-7. It signs those outbound requests with the target credentials and returns an S3-compatible response.
+3. It classifies the operation and rejects unsupported operations.
+4. If auth is enabled, it validates the inbound SigV4 signature against configured client credentials.
+5. It resolves one or more matching routes.
+6. It applies any configured bucket or key rewrites.
+7. It builds outbound S3 requests to the selected target backends.
+8. It signs those outbound requests with the target credentials and returns an S3-compatible response.
 
 ## Key Behaviors
 
 - `ListBuckets` is virtual. It returns proxy-defined buckets visible to the authenticated client, not upstream bucket discovery.
 - Reads never fan out in v1. Even when a route has multiple destinations, one effective backend is selected per read.
-- For `dispatch = "all"`, write request bodies are buffered in memory before they are replayed to each destination, bounded by `listener.replay_body_max_bytes` per request and `listener.replay_body_aggregate_max_bytes` across the process.
-- `ordered_failover` only fails over on transport errors, timeouts, and upstream `5xx`. It does not fail over on `404`, `NoSuchKey`, or `NoSuchBucket`.
+- Request bodies are buffered in memory when replay is required, including fan-out writes, multi-route writes, concrete inbound SigV4 payload hashes, and unknown-length outbound bodies. Buffering is bounded by `listener.replay_body_max_bytes` per request and `listener.replay_body_aggregate_max_bytes` across the process.
+- `ordered_failover` advances on errors returned while preparing, signing, or sending the upstream request and on upstream `5xx`. It does not fail over on `404`, `NoSuchKey`, `NoSuchBucket`, or other upstream `4xx` responses.
 - `path_prefix` matching is strict: `RawPath == prefix` or `RawPath` starts with `prefix + "/"`.
 
 ## Documentation Map

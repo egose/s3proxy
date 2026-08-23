@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 
 type Request struct {
 	Operation s3ops.Operation
-	Target    config.S3Target
+	Target    string
 	Bucket    string
 	Key       string
 	Source    *http.Request
@@ -32,30 +33,30 @@ type Executor interface {
 	Do(ctx context.Context, req Request) (*Response, error)
 }
 
-func NewClient(httpClient *http.Client) Executor {
-	return NewClientWithReplayLimit(httpClient, replaybody.DefaultMaxBytes)
-}
-
-func NewClientWithReplayLimit(httpClient *http.Client, replayBodyMaxBytes int64) Executor {
-	return NewClientWithReplayBudget(httpClient, replaybody.NewBudget(replayBodyMaxBytes, replaybody.DefaultAggregateMaxBytes))
-}
-
-func NewClientWithReplayBudget(httpClient *http.Client, replayBudget *replaybody.Budget) Executor {
-	if replayBudget == nil {
-		replayBudget = replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes)
+func NewClient(httpClient *http.Client, targets map[string]config.S3Target, replayBudget *replaybody.Budget) (Executor, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("http client is required")
 	}
-	return &client{httpClient: httpClient, replayBudget: replayBudget}
+	if replayBudget == nil {
+		return nil, fmt.Errorf("replay budget is required")
+	}
+	return &client{httpClient: httpClient, targets: cloneTargets(targets), replayBudget: replayBudget}, nil
 }
 
 type client struct {
 	httpClient   *http.Client
+	targets      map[string]config.S3Target
 	replayBudget *replaybody.Budget
 }
 
 func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
+	target, err := c.target(req.Target)
+	if err != nil {
+		return nil, err
+	}
 	var cancel context.CancelFunc
-	if req.Target.Timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, req.Target.Timeout)
+	if target.Timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, target.Timeout)
 	}
 	cancelOnError := func() {
 		if cancel != nil {
@@ -63,7 +64,7 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 		}
 	}
 
-	targetURL, err := buildTargetURL(req.Target, req.Bucket, req.Key, req.Source)
+	targetURL, err := buildTargetURL(target, req.Bucket, req.Key, req.Source)
 	if err != nil {
 		cancelOnError()
 		return nil, fmt.Errorf("build target URL: %w", err)
@@ -103,7 +104,7 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	}
 	outReq.Header.Set("Host", targetURL.Host)
 
-	if err := signRequest(outReq, req.Target); err != nil {
+	if err := signRequest(outReq, target); err != nil {
 		cancelOnError()
 		return nil, fmt.Errorf("sign outbound request: %w", err)
 	}
@@ -111,7 +112,7 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	resp, err := c.httpClient.Do(outReq)
 	if err != nil {
 		cancelOnError()
-		return nil, fmt.Errorf("upstream request failed: %w", err)
+		return nil, fmt.Errorf("upstream request failed: %w", sanitizeHTTPClientError(err))
 	}
 	respBody := resp.Body
 	if cancel != nil {
@@ -127,6 +128,37 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 		Header:     resp.Header,
 		Body:       respBody,
 	}, nil
+}
+
+func sanitizeHTTPClientError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s %s: %w", urlErr.Op, safeURLForError(urlErr.URL), urlErr.Err)
+	}
+	return err
+}
+
+func safeURLForError(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "[redacted-url]"
+	}
+	host := u.Hostname()
+	if port := u.Port(); port != "" {
+		host += ":" + port
+	}
+	return u.Scheme + "://" + host
+}
+
+func (c *client) target(name string) (config.S3Target, error) {
+	if c == nil || c.targets == nil {
+		return config.S3Target{}, fmt.Errorf("target registry is not configured")
+	}
+	target, ok := c.targets[name]
+	if !ok {
+		return config.S3Target{}, fmt.Errorf("target %q is not configured", name)
+	}
+	return cloneTarget(target), nil
 }
 
 type cancelOnCloseReadCloser struct {
@@ -156,6 +188,9 @@ func (c *client) prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io
 		return src.Body, nil, src.ContentLength, nil
 	}
 	if src.GetBody == nil {
+		if c.replayBudget == nil {
+			return nil, nil, 0, fmt.Errorf("replay budget is not configured")
+		}
 		if err := c.replayBudget.Ensure(src); err != nil {
 			return nil, nil, 0, err
 		}
@@ -218,6 +253,22 @@ func cloneURL(src *url.URL) *url.URL {
 	}
 	copy := *src
 	return &copy
+}
+
+func cloneTargets(targets map[string]config.S3Target) map[string]config.S3Target {
+	out := make(map[string]config.S3Target, len(targets))
+	for name, target := range targets {
+		out[name] = cloneTarget(target)
+	}
+	return out
+}
+
+func cloneTarget(target config.S3Target) config.S3Target {
+	if target.EndpointURL != nil {
+		endpoint := *target.EndpointURL
+		target.EndpointURL = &endpoint
+	}
+	return target
 }
 
 func buildObjectPath(prefix, key string) (string, string, error) {

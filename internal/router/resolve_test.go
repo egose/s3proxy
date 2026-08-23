@@ -1,8 +1,8 @@
 package router
 
 import (
-	"net/url"
 	"regexp"
+	"sync"
 	"testing"
 
 	"github.com/egose/s3proxy/internal/config"
@@ -24,8 +24,8 @@ func buildTestRuntime() *config.Runtime {
 			Mode: config.AuthModeNone,
 		},
 		Targets: map[string]config.S3Target{
-			"primary": {Name: "primary", Endpoint: "https://a.internal", Region: "us-east-1"},
-			"replica": {Name: "replica", Endpoint: "https://b.internal", Region: "us-east-1"},
+			"primary": {Name: "primary"},
+			"replica": {Name: "replica"},
 		},
 		Parsers: map[string]config.Parser{
 			"images":      {Name: "images", Kind: config.ParserPathPrefix, Prefix: "/images"},
@@ -64,9 +64,13 @@ func buildTestRuntime() *config.Runtime {
 	}
 }
 
+func newTestResolver(rt *config.Runtime) RouteResolver {
+	return NewResolver(rt.Routes, rt.Parsers, []string{"primary", "replica"})
+}
+
 func TestResolve_PathPrefix(t *testing.T) {
 	rt := buildTestRuntime()
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 	ctx := &requestctx.Context{
 		RawPath: "/images/cat.jpg",
 		Bucket:  "images",
@@ -86,7 +90,7 @@ func TestResolve_PathPrefix(t *testing.T) {
 
 func TestResolve_BucketRegex(t *testing.T) {
 	rt := buildTestRuntime()
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 	ctx := &requestctx.Context{
 		Bucket: "tenant-acme-logs",
 		Key:    "file.log",
@@ -108,7 +112,7 @@ func TestResolve_BucketRegex(t *testing.T) {
 
 func TestResolve_NoMatch(t *testing.T) {
 	rt := buildTestRuntime()
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 	ctx := &requestctx.Context{
 		RawPath: "/unknown/path",
 		Bucket:  "unknown",
@@ -121,7 +125,7 @@ func TestResolve_NoMatch(t *testing.T) {
 
 func TestResolve_OperationFilter(t *testing.T) {
 	rt := buildTestRuntime()
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 	ctx := &requestctx.Context{
 		RawPath: "/images/cat.jpg",
 		Bucket:  "images",
@@ -134,7 +138,7 @@ func TestResolve_OperationFilter(t *testing.T) {
 
 func TestResolve_EffectiveRead(t *testing.T) {
 	rt := buildTestRuntime()
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 	ctx := &requestctx.Context{
 		Bucket: "tenant-acme-logs",
 	}
@@ -142,11 +146,11 @@ func TestResolve_EffectiveRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if matches[0].EffectiveRead == nil {
+	if matches[0].EffectiveRead == "" {
 		t.Fatal("expected effective read target")
 	}
-	if matches[0].EffectiveRead.Name != "primary" {
-		t.Errorf("expected effective read 'primary', got %s", matches[0].EffectiveRead.Name)
+	if matches[0].EffectiveRead != "primary" {
+		t.Errorf("expected effective read 'primary', got %s", matches[0].EffectiveRead)
 	}
 }
 
@@ -164,8 +168,8 @@ func TestHashIndex(t *testing.T) {
 func TestResolve_ContinueReturnsMultipleMatches(t *testing.T) {
 	rt := &config.Runtime{
 		Targets: map[string]config.S3Target{
-			"primary": {Name: "primary", Endpoint: "https://a.internal", Region: "us-east-1"},
-			"replica": {Name: "replica", Endpoint: "https://b.internal", Region: "us-east-1"},
+			"primary": {Name: "primary"},
+			"replica": {Name: "replica"},
 		},
 		Parsers: map[string]config.Parser{
 			"images": {Name: "images", Kind: config.ParserPathPrefix, Prefix: "/images"},
@@ -191,7 +195,7 @@ func TestResolve_ContinueReturnsMultipleMatches(t *testing.T) {
 			},
 		},
 	}
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 	ctx := &requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}
 
 	matches, err := r.Resolve(ctx, s3ops.OpPutObject)
@@ -211,7 +215,7 @@ func TestResolve_ContinueReturnsMultipleMatches(t *testing.T) {
 
 func TestResolve_HostSuffixRequiresLabelBoundary(t *testing.T) {
 	rt := buildTestRuntime()
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 
 	_, err := r.Resolve(&requestctx.Context{Host: "badexample.com"}, s3ops.OpGetObject)
 	if err == nil {
@@ -229,19 +233,13 @@ func TestResolve_HostSuffixRequiresLabelBoundary(t *testing.T) {
 
 func TestResolverSnapshotsRuntimeAtConstruction(t *testing.T) {
 	rt := buildTestRuntime()
-	endpoint, err := url.Parse("https://a.internal/base")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt.Targets["primary"] = config.S3Target{Name: "primary", Endpoint: endpoint.String(), EndpointURL: endpoint, Region: "us-east-1"}
-	r := NewResolver(rt)
+	r := newTestResolver(rt)
 
 	rt.Routes[0].Name = "mutated"
 	rt.Routes[0].Operations[0] = "DeleteObject"
 	rt.Routes[0].DestinationRefs[0] = "replica"
 	rt.Parsers["images"] = config.Parser{Name: "images", Kind: config.ParserPathPrefix, Prefix: "/mutated"}
-	rt.Targets["primary"] = config.S3Target{Name: "mutated", Endpoint: "https://mutated", Region: "us-west-2"}
-	endpoint.Host = "changed.internal"
+	rt.Targets["primary"] = config.S3Target{Name: "mutated"}
 
 	matches, err := r.Resolve(&requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}, s3ops.OpGetObject)
 	if err != nil {
@@ -250,10 +248,80 @@ func TestResolverSnapshotsRuntimeAtConstruction(t *testing.T) {
 	if got, want := matches[0].Route.Name, "images_rw"; got != want {
 		t.Fatalf("Route.Name = %q, want %q", got, want)
 	}
-	if got, want := matches[0].Destinations[0].Name, "primary"; got != want {
+	if got, want := matches[0].Destinations[0], "primary"; got != want {
 		t.Fatalf("destination = %q, want %q", got, want)
 	}
-	if got, want := matches[0].Destinations[0].EndpointURL.Host, "a.internal"; got != want {
-		t.Fatalf("EndpointURL.Host = %q, want %q", got, want)
+}
+
+func TestResolve_ReturnedMatchMutationDoesNotAffectLaterResolve(t *testing.T) {
+	rt := buildTestRuntime()
+	r := newTestResolver(rt)
+	ctx := &requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}
+
+	matches, err := r.Resolve(ctx, s3ops.OpGetObject)
+	if err != nil {
+		t.Fatal(err)
 	}
+	matches[0].Route.Operations[0] = string(s3ops.OpDeleteObject)
+	matches[0].Route.DestinationRefs[0] = "replica"
+	matches[0].Destinations[0] = "mutated"
+	matches[0].EffectiveRead = "mutated-read"
+
+	matches, err = r.Resolve(ctx, s3ops.OpGetObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := matches[0].Route.Operations[0], string(s3ops.OpGetObject); got != want {
+		t.Fatalf("Route.Operations[0] = %q, want %q", got, want)
+	}
+	if got, want := matches[0].Route.DestinationRefs[0], "primary"; got != want {
+		t.Fatalf("Route.DestinationRefs[0] = %q, want %q", got, want)
+	}
+	if got, want := matches[0].Destinations[0], "primary"; got != want {
+		t.Fatalf("Destinations[0].Name = %q, want %q", got, want)
+	}
+	if got, want := matches[0].EffectiveRead, "primary"; got != want {
+		t.Fatalf("EffectiveRead.Name = %q, want %q", got, want)
+	}
+}
+
+func TestResolve_ConcurrentResolveWithPriorMatchMutation(t *testing.T) {
+	rt := buildTestRuntime()
+	r := newTestResolver(rt)
+	ctx := &requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}
+	prior, err := r.Resolve(ctx, s3ops.OpGetObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			matches, err := r.Resolve(ctx, s3ops.OpGetObject)
+			if err != nil {
+				t.Errorf("Resolve failed: %v", err)
+				return
+			}
+			if matches[0].Route.Operations[0] != string(s3ops.OpGetObject) || matches[0].Destinations[0] != "primary" || matches[0].EffectiveRead != "primary" {
+				t.Errorf("unexpected match: %#v", matches[0])
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			prior[0].Route.Operations[0] = string(s3ops.OpDeleteObject)
+			prior[0].Route.DestinationRefs[0] = "replica"
+			prior[0].Destinations[0] = "mutated"
+			prior[0].EffectiveRead = "mutated-read"
+			prior[0].Route.Operations[0] = string(s3ops.OpGetObject)
+			prior[0].Route.DestinationRefs[0] = "primary"
+			prior[0].Destinations[0] = "primary"
+			prior[0].EffectiveRead = "primary"
+		}
+	}()
+	wg.Wait()
 }

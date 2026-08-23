@@ -67,6 +67,8 @@ Each route has an `on_match` policy:
 
 This lets you compose behavior. For example, one `PutObject` can be applied to multiple matching routes if the earlier match uses `continue`.
 
+`continue` is valid only on write-only routes. Configuration validation rejects a `continue` route containing any read operation.
+
 For write requests matched by multiple routes, every matched route must succeed. A later route failure is returned as failure rather than hiding behind an earlier success.
 
 ## Dispatch Modes
@@ -78,11 +80,14 @@ Each route also has a `dispatch` policy:
 
 `dispatch = "all"` is for multi-destination writes such as replication.
 
+An `all` route must include `PutObject` or `DeleteObject`. It may also include supported read operations, but those reads still use one destination according to `read_preference`. A write-only `all` route must use `read_preference = "first"`.
+
 In v1:
 
 - writes can fan out
 - reads never fan out
 - if any destination fails during a fan-out write, the request fails
+- at most four destination attempts run concurrently
 - upstream HTTP failures preserve the primary upstream error response when available
 - transport or replay failures return a proxy-generated failure
 - fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back
@@ -91,17 +96,16 @@ In v1:
 
 When a route has more than one destination, reads choose one effective backend using `read_preference`:
 
-- `first`
-- `random`
-- `hash`
-- `ordered_failover`
+- `first`: select the first configured destination; this is the default
+- `random`: select a destination for each resolution
+- `hash`: deterministically select using the original inbound bucket and key before rewrites
+- `ordered_failover`: try destinations in configuration order
 
 `ordered_failover` is the safest choice when you want a preferred backend with a backup.
 
-Failover happens only on:
+Failover advances on:
 
-- transport errors
-- request timeouts
+- errors returned while preparing, signing, or sending an upstream request, including transport errors, request timeouts, and replay-limit errors
 - upstream `5xx`
 
 Failover does not happen on:
@@ -129,7 +133,7 @@ Example:
 ```hcl
 route "tenant_logs" {
   parser          = "tenant_logs"
-  operations      = ["GetObject", "PutObject", "DeleteObject", "ListObjectsV2"]
+  operations      = ["GetObject", "PutObject", "DeleteObject"]
   destinations    = ["primary"]
   dispatch        = "first"
   on_match        = "stop"
@@ -147,6 +151,8 @@ Template data includes:
 - `Bucket`
 - `Key`
 - `Captures`
+
+Key rewrites change the outbound URL path; they do not translate into `ListObjectsV2` query parameters such as `prefix`. A listing route should normally leave its key empty and forward listing filters supplied by the client.
 
 ## Strict Prefix Matching
 
@@ -219,7 +225,7 @@ Preferred backend with failover:
 route "replica_failover_read" {
   parser          = "failover_prefix"
   operations      = ["GetObject", "HeadObject"]
-  destinations    = ["missing", "replica"]
+  destinations    = ["primary", "replica"]
   dispatch        = "first"
   on_match        = "stop"
   read_preference = "ordered_failover"

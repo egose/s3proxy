@@ -163,8 +163,14 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 		if len(r.DestinationRefs) == 0 {
 			return fmt.Errorf("route %q: at least one destination is required", r.Name)
 		}
+		seenDestinations := make(map[string]string, len(r.DestinationRefs))
 		for _, d := range r.DestinationRefs {
-			if _, ok := targets[d]; !ok {
+			targetName := stripRefPrefix(d)
+			if existing, dup := seenDestinations[targetName]; dup {
+				return fmt.Errorf("route %q: destinations contain duplicate target %q from %q and %q", r.Name, targetName, existing, d)
+			}
+			seenDestinations[targetName] = d
+			if _, ok := targets[targetName]; !ok {
 				return fmt.Errorf("route %q: unknown destination %q", r.Name, d)
 			}
 		}
@@ -190,7 +196,12 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 		if len(r.Operations) == 0 {
 			return fmt.Errorf("route %q: at least one operation is required", r.Name)
 		}
+		seenOperations := make(map[string]bool, len(r.Operations))
 		for _, op := range r.Operations {
+			if seenOperations[op] {
+				return fmt.Errorf("route %q: operations contain duplicate entry %q", r.Name, op)
+			}
+			seenOperations[op] = true
 			if !s3op.IsConfigurable(op) {
 				return fmt.Errorf("route %q: unsupported operation %q", r.Name, op)
 			}
@@ -310,9 +321,7 @@ func routeSupportsContinue(r Route) bool {
 		return false
 	}
 	for _, op := range r.Operations {
-		switch op {
-		case "PutObject", "DeleteObject":
-		default:
+		if !s3op.IsWrite(s3op.Operation(op)) {
 			return false
 		}
 	}
@@ -320,16 +329,11 @@ func routeSupportsContinue(r Route) bool {
 }
 
 func supportsDispatchAll(op string) bool {
-	switch op {
-	case "PutObject", "DeleteObject":
-		return true
-	default:
-		return false
-	}
+	return s3op.SupportsFanout(s3op.Operation(op))
 }
 
 func supportsDispatchAllRouteOperation(op string) bool {
-	return isReadOperation(op) || supportsDispatchAll(op)
+	return s3op.IsRead(s3op.Operation(op)) || supportsDispatchAll(op)
 }
 
 func routeHasFanoutWrite(r Route) bool {
@@ -343,18 +347,9 @@ func routeHasFanoutWrite(r Route) bool {
 
 func routeHasRead(r Route) bool {
 	for _, op := range r.Operations {
-		if isReadOperation(op) {
+		if s3op.IsRead(s3op.Operation(op)) {
 			return true
 		}
 	}
 	return false
-}
-
-func isReadOperation(op string) bool {
-	switch op {
-	case "GetObject", "HeadObject", "HeadBucket", "ListObjectsV2", "ListBuckets":
-		return true
-	default:
-		return false
-	}
 }

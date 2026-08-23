@@ -19,6 +19,15 @@ forwards them to S3-compatible targets using the destinations' credentials.
 - `ListObjectsV2`
 - `ListBuckets` (virtual/proxy-defined)
 
+Supported v1 operations accept only the query keys needed for their current contract. Inbound SigV4 presign query keys (`X-Amz-Algorithm`, `X-Amz-Credential`, `X-Amz-Date`, `X-Amz-Expires`, `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-SignedHeaders`) are accepted for authentication and are not forwarded to backends.
+
+| Operation                                                                           | Supported non-auth query keys                                                                                                                            |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, `HeadBucket`, `ListBuckets` | none, except optional AWS SDK `x-id` matching the operation name                                                                                         |
+| `ListObjectsV2`                                                                     | `list-type=2`, `continuation-token`, `delimiter`, `encoding-type`, `fetch-owner`, `max-keys`, `prefix`, `start-after`, and optional `x-id=ListObjectsV2` |
+
+All other query-key combinations are rejected before route dispatch. This includes object or bucket subresources such as `acl`, `tagging`, `retention`, `legal-hold`, `torrent`, `versioning`, `versions`, `versionId`, `restore`, `select`, response header overrides such as `response-content-type`, and multipart query variants such as `uploads`, `uploadId`, and `partNumber`.
+
 ### Auth Modes
 
 - `none` – skip inbound authentication (trusted environments only)
@@ -42,6 +51,7 @@ forwards them to S3-compatible targets using the destinations' credentials.
 ### Unsupported in V1
 
 - Multipart uploads — return S3-compatible `NotImplemented`
+- Unsupported S3 subresource operations — return S3-compatible `NotImplemented`
 - Credential generation / rotation / DB-backed auth
 - Merged multi-backend `ListObjects` pagination
 - Hot config reload

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -34,7 +35,6 @@ const (
 
 type BuildOptions struct {
 	ConfigPath      string
-	Version         string
 	Logger          *slog.Logger
 	ShutdownTimeout time.Duration
 }
@@ -44,9 +44,10 @@ type App struct {
 	transport       *http.Transport
 	logger          *slog.Logger
 	shutdownTimeout time.Duration
+	listen          func(network, address string) (net.Listener, error)
 }
 
-func Build(ctx context.Context, opts BuildOptions) (*App, error) {
+func Build(opts BuildOptions) (*App, error) {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -60,35 +61,40 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 
 	replayBudget := replaybody.NewBudget(rt.Listener.ReplayBodyMaxBytes, rt.Listener.ReplayBodyAggregateMaxBytes)
 
-	authenticator, err := auth.NewAuthenticatorWithReplayBudget(rt.Auth, replayBudget)
+	authenticator, err := auth.NewAuthenticator(rt.Auth, replayBudget)
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
-	authorizer := auth.NewAuthorizer(rt.Auth)
+	authorizer := auth.NewAuthorizer()
 
-	resolver := router.NewResolver(rt)
+	resolver := router.NewResolver(rt.Routes, rt.Parsers, targetNames(rt.Targets))
 	rewriter := rewrite.New()
 
 	transport := newUpstreamTransport()
 	httpClient := &http.Client{
 		Transport: transport,
 	}
-	backend := s3.NewClientWithReplayBudget(httpClient, replayBudget)
-	dispatcher := dispatch.NewWithReplayBudget(backend, replayBudget)
+	backend, err := s3.NewClient(httpClient, rt.Targets, replayBudget)
+	if err != nil {
+		return nil, fmt.Errorf("backend: %w", err)
+	}
+	dispatcher, err := dispatch.New(backend, replayBudget)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: %w", err)
+	}
 
 	buckets := listbuckets.New(rt.Buckets, time.Now())
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
-		Addressing:         rt.Listener.Addressing,
-		ReplayBodyMaxBytes: rt.Listener.ReplayBodyMaxBytes,
-		ReplayBudget:       replayBudget,
-		Authenticator:      authenticator,
-		Authorizer:         authorizer,
-		Router:             resolver,
-		Rewriter:           rewriter,
-		Dispatcher:         dispatcher,
-		Buckets:            buckets,
-		Logger:             logger,
+		Addressing:    rt.Listener.Addressing,
+		ReplayBudget:  replayBudget,
+		Authenticator: authenticator,
+		Authorizer:    authorizer,
+		Router:        resolver,
+		Rewriter:      rewriter,
+		Dispatcher:    dispatcher,
+		Buckets:       buckets,
+		Logger:        logger,
 	})
 
 	server := &http.Server{
@@ -121,6 +127,14 @@ func Build(ctx context.Context, opts BuildOptions) (*App, error) {
 	return &App{server: server, transport: transport, logger: logger, shutdownTimeout: shutdownTimeout}, nil
 }
 
+func targetNames(targets map[string]config.S3Target) []string {
+	out := make([]string, 0, len(targets))
+	for name := range targets {
+		out = append(out, name)
+	}
+	return out
+}
+
 func newUpstreamTransport() *http.Transport {
 	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -129,6 +143,7 @@ func newUpstreamTransport() *http.Transport {
 			KeepAlive: defaultUpstreamKeepAlive,
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
+		DisableCompression:    true,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   defaultUpstreamMaxIdleConnsPerHost,
 		IdleConnTimeout:       defaultUpstreamIdleConnTimeout,
@@ -151,10 +166,32 @@ func (a *App) Run(ctx context.Context) error {
 	if addr == "" {
 		addr = ":http"
 	}
-	ln, err := net.Listen("tcp", addr)
+	listen := net.Listen
+	if a.listen != nil {
+		listen = a.listen
+	}
+	ln, err := listen("tcp", addr)
 	if err != nil {
 		return err
 	}
+	defer a.transport.CloseIdleConnections()
+
+	requestsCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	previousBaseContext := a.server.BaseContext
+	a.server.BaseContext = func(ln net.Listener) context.Context {
+		base := requestsCtx
+		if previousBaseContext != nil {
+			base = previousBaseContext(ln)
+		}
+		ctx, cancel := context.WithCancel(base)
+		go func() {
+			<-requestsCtx.Done()
+			cancel()
+		}()
+		return ctx
+	}
+	defer func() { a.server.BaseContext = previousBaseContext }()
 	a.logger.Info("starting server", "address", a.server.Addr)
 
 	errCh := make(chan error, 1)
@@ -168,18 +205,31 @@ func (a *App) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		a.logger.Info("shutting down server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
-		defer cancel()
-		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			a.transport.CloseIdleConnections()
-			return fmt.Errorf("server shutdown: %w", err)
+		shutdownErr := a.server.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			cancelRequests()
+			closeErr := normalizeServerError(a.server.Close())
+			serveErr := normalizeServerError(<-errCh)
+			return serverShutdownError(shutdownErr, closeErr, serveErr)
 		}
-		a.transport.CloseIdleConnections()
 		if err := normalizeServerError(<-errCh); err != nil {
 			return err
 		}
 		a.logger.Info("server stopped")
 		return nil
 	}
+}
+
+func serverShutdownError(shutdownErr, closeErr, serveErr error) error {
+	errs := []error{shutdownErr}
+	if closeErr != nil {
+		errs = append(errs, fmt.Errorf("server close: %w", closeErr))
+	}
+	if serveErr != nil {
+		errs = append(errs, fmt.Errorf("server serve: %w", serveErr))
+	}
+	return fmt.Errorf("server shutdown: %w", errors.Join(errs...))
 }
 
 func normalizeServerError(err error) error {

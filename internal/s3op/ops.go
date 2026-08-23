@@ -39,6 +39,10 @@ func SupportsFanout(op Operation) bool {
 	return false
 }
 
+func DeclaredOperations() []Operation {
+	return []Operation{GetObject, HeadObject, PutObject, DeleteObject, HeadBucket, ListObjectsV2, ListObjectsV1, ListBuckets, CopyObject, Unknown}
+}
+
 func IsConfigurable(op string) bool {
 	switch Operation(op) {
 	case GetObject, HeadObject, PutObject, DeleteObject, HeadBucket, ListObjectsV2, ListBuckets:

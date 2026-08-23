@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -74,14 +75,12 @@ func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
 		return nil, err
 	}
 
-	if err := v.verifyPayloadHash(r, signedHeaders); err != nil {
-		return nil, err
-	}
-
-	clone, err := cloneForSigning(r)
+	payloadHash, err := validatePayloadHashClaim(r, signedHeaders)
 	if err != nil {
 		return nil, err
 	}
+
+	clone := cloneForSigning(r)
 	clone.Header.Del("Authorization")
 
 	// Strip any headers from the clone that the original signature did not
@@ -95,11 +94,6 @@ func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
 		SecretAccessKey: client.SecretKey,
 	}
 
-	payloadHash := clone.Header.Get("X-Amz-Content-Sha256")
-	if payloadHash == "" {
-		payloadHash = unsignedPayloadSentinel
-	}
-
 	if err := v.signer.SignHTTP(context.Background(), creds, clone, payloadHash, inboundService, region, parseAmzDate(amzDate)); err != nil {
 		return nil, err
 	}
@@ -111,21 +105,29 @@ func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
 	if subtle.ConstantTimeCompare([]byte(generatedSignature), []byte(providedSignature)) != 1 {
 		return nil, errSignatureMismatch
 	}
+	if err := v.verifyPayloadBody(r, payloadHash); err != nil {
+		return nil, err
+	}
 	filterAuthenticatedHeaders(r, signedHeaders)
 
-	return &Principal{
-		Name:           client.Name,
-		AccessKey:      client.AccessKey,
-		AllowRoutes:    client.AllowRoutes,
-		AllowOps:       client.AllowOps,
-		VisibleBuckets: client.VisibleBuckets,
-	}, nil
+	return principalFromClient(client), nil
 }
 
 func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
-	cred := r.URL.Query().Get("X-Amz-Credential")
-	if cred == "" {
-		return nil, errMissingAuth
+	query := r.URL.Query()
+	if err := rejectDuplicatePresignParams(query); err != nil {
+		return nil, err
+	}
+	algorithm, err := requiredPresignParam(query, "X-Amz-Algorithm", errUnsupportedAuthScheme)
+	if err != nil {
+		return nil, err
+	}
+	if algorithm != "AWS4-HMAC-SHA256" {
+		return nil, errUnsupportedAuthScheme
+	}
+	cred, err := requiredPresignParam(query, "X-Amz-Credential", errMissingAuth)
+	if err != nil {
+		return nil, err
 	}
 
 	parts := strings.Split(cred, "/")
@@ -140,7 +142,13 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 		return nil, errUnknownAccessKey
 	}
 
-	date := r.URL.Query().Get("X-Amz-Date")
+	date, err := requiredPresignParam(query, "X-Amz-Date", errMissingDate)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := requiredPresignParam(query, "X-Amz-Expires", errMissingExpires); err != nil {
+		return nil, err
+	}
 	if err := v.checkPresignWindow(r, date); err != nil {
 		return nil, err
 	}
@@ -149,19 +157,28 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 	if err != nil {
 		return nil, err
 	}
-	signedHeaders, err := parseSignedHeaders(r.URL.Query().Get("X-Amz-SignedHeaders"))
+	signedHeadersRaw, err := requiredPresignParam(query, "X-Amz-SignedHeaders", errMissingSignedHeaders)
 	if err != nil {
 		return nil, err
 	}
-	if err := v.verifyPayloadHash(r, signedHeaders); err != nil {
+	signedHeaders, err := parseSignedHeaders(signedHeadersRaw)
+	if err != nil {
+		return nil, err
+	}
+	payloadHash, err := validatePayloadHashClaim(r, signedHeaders)
+	if err != nil {
 		return nil, err
 	}
 
-	clone := r.Clone(context.Background())
-	provided := r.URL.Query().Get("X-Amz-Signature")
-	if provided == "" {
-		return nil, errMissingSignature
+	provided, err := requiredPresignParam(query, "X-Amz-Signature", errMissingSignature)
+	if err != nil {
+		return nil, err
 	}
+	clone := r.Clone(context.Background())
+	clone.Body = http.NoBody
+	cloneQuery := clone.URL.Query()
+	cloneQuery.Del("X-Amz-Signature")
+	clone.URL.RawQuery = cloneQuery.Encode()
 	stripUnsignedHeaders(clone, signedHeaders)
 
 	creds := aws.Credentials{
@@ -169,28 +186,61 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 		SecretAccessKey: client.SecretKey,
 	}
 
-	payloadHash := clone.Header.Get("X-Amz-Content-Sha256")
-	if payloadHash == "" {
-		payloadHash = unsignedPayloadSentinel
-	}
-	_, _, err = v.signer.PresignHTTP(context.Background(), creds, clone, payloadHash, inboundService, region, parseAmzDate(date))
+	signedURI, _, err := v.signer.PresignHTTP(context.Background(), creds, clone, payloadHash, inboundService, region, parseAmzDate(date))
 	if err != nil {
 		return nil, err
 	}
 
-	generated := clone.URL.Query().Get("X-Amz-Signature")
+	generated, err := signatureFromPresignedURI(signedURI)
+	if err != nil {
+		return nil, err
+	}
 	if subtle.ConstantTimeCompare([]byte(generated), []byte(provided)) != 1 {
 		return nil, errSignatureMismatch
 	}
+	if err := v.verifyPayloadBody(r, payloadHash); err != nil {
+		return nil, err
+	}
 	filterAuthenticatedHeaders(r, signedHeaders)
 
-	return &Principal{
-		Name:           client.Name,
-		AccessKey:      client.AccessKey,
-		AllowRoutes:    client.AllowRoutes,
-		AllowOps:       client.AllowOps,
-		VisibleBuckets: client.VisibleBuckets,
-	}, nil
+	return principalFromClient(client), nil
+}
+
+func rejectDuplicatePresignParams(query url.Values) error {
+	for _, name := range []string{
+		"X-Amz-Algorithm",
+		"X-Amz-Credential",
+		"X-Amz-Date",
+		"X-Amz-Expires",
+		"X-Amz-Signature",
+		"X-Amz-SignedHeaders",
+		"X-Amz-Security-Token",
+	} {
+		if len(query[name]) > 1 {
+			return fmt.Errorf("%w: %s", errDuplicatePresignParameter, name)
+		}
+	}
+	return nil
+}
+
+func requiredPresignParam(query url.Values, name string, missing error) (string, error) {
+	values, ok := query[name]
+	if !ok || len(values) == 0 || values[0] == "" {
+		return "", missing
+	}
+	return values[0], nil
+}
+
+func signatureFromPresignedURI(signedURI string) (string, error) {
+	parsed, err := url.Parse(signedURI)
+	if err != nil {
+		return "", err
+	}
+	signatures := parsed.Query()["X-Amz-Signature"]
+	if len(signatures) != 1 || signatures[0] == "" {
+		return "", errMissingSignature
+	}
+	return signatures[0], nil
 }
 
 func parseAuthHeader(header string) (accessKey, scope string, signedHeaders []string, signature string, err error) {
@@ -261,9 +311,6 @@ func (v *sigV4Verifier) checkDateSkew(amzDate string) error {
 
 func (v *sigV4Verifier) checkPresignWindow(r *http.Request, amzDate string) error {
 	expiresRaw := r.URL.Query().Get("X-Amz-Expires")
-	if expiresRaw == "" {
-		return errMissingExpires
-	}
 	expiresSeconds, err := strconv.ParseInt(expiresRaw, 10, 64)
 	if err != nil {
 		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)
@@ -371,29 +418,39 @@ func containsHeader(headers []string, name string) bool {
 	return false
 }
 
-func (v *sigV4Verifier) verifyPayloadHash(r *http.Request, signedHeaders []string) error {
+func validatePayloadHashClaim(r *http.Request, signedHeaders []string) (string, error) {
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
-	if payloadHash == "" || payloadHash == unsignedPayloadSentinel {
-		return nil
+	if payloadHash == "" {
+		return unsignedPayloadSentinel, nil
+	}
+	if payloadHash == unsignedPayloadSentinel {
+		return payloadHash, nil
 	}
 	if !containsHeader(signedHeaders, "x-amz-content-sha256") {
-		return errUnsignedPayloadHash
+		return "", errUnsignedPayloadHash
+	}
+	decoded, err := hex.DecodeString(payloadHash)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", errInvalidPayloadHash
+	}
+	return payloadHash, nil
+}
+
+func (v *sigV4Verifier) verifyPayloadBody(r *http.Request, payloadHash string) error {
+	if payloadHash == "" || payloadHash == unsignedPayloadSentinel {
+		return nil
 	}
 	decoded, err := hex.DecodeString(payloadHash)
 	if err != nil || len(decoded) != sha256.Size {
 		return errInvalidPayloadHash
 	}
-	if v.replayBudget != nil {
-		err = v.replayBudget.Ensure(r)
-	} else {
-		err = replaybody.Ensure(r)
-	}
+	err = v.replayBudget.Ensure(r)
 	if err != nil {
 		return err
 	}
-	success := false
+	verified := false
 	defer func() {
-		if !success {
+		if !verified {
 			_ = replaybody.Release(r)
 		}
 	}()
@@ -415,45 +472,38 @@ func (v *sigV4Verifier) verifyPayloadHash(r *http.Request, signedHeaders []strin
 	if subtle.ConstantTimeCompare(h.Sum(nil), decoded) != 1 {
 		return errPayloadHashMismatch
 	}
-	success = true
+	verified = true
 	return nil
 }
 
-func cloneForSigning(r *http.Request) (*http.Request, error) {
+func cloneForSigning(r *http.Request) *http.Request {
 	clone := r.Clone(context.Background())
-	if r.GetBody != nil {
-		body, err := r.GetBody()
-		if err != nil {
-			return nil, err
-		}
-		clone.Body = body
-		return clone, nil
-	}
 	clone.Body = http.NoBody
-	return clone, nil
+	return clone
 }
 
 const unsignedPayloadSentinel = "UNSIGNED-PAYLOAD"
 
 var (
-	errUnknownAccessKey      = AuthError("unknown access key")
-	errSignatureMismatch     = AuthError("signature does not match")
-	errMissingAuth           = AuthError("missing Authorization header")
-	errMissingAuthSignature  = AuthError("Signature not found in Authorization")
-	errMissingSignature      = AuthError("missing X-Amz-Signature")
-	errMissingAccessKey      = AuthError("access key not found in credentials")
-	errMissingSignedHeaders  = AuthError("SignedHeaders not found in Authorization")
-	errInvalidCredential     = AuthError("invalid credential format")
-	errMissingExpires        = AuthError("missing X-Amz-Expires")
-	errInvalidExpires        = AuthError("invalid X-Amz-Expires")
-	errUnsupportedAuthScheme = AuthError("unsupported authorization scheme")
-	errRequestExpired        = AuthError("request timestamp outside allowed skew")
-	errPresignExpired        = AuthError("presigned request has expired")
-	errMissingDate           = AuthError("missing X-Amz-Date")
-	errUnsignedDate          = AuthError("X-Amz-Date must be signed")
-	errInvalidPayloadHash    = AuthError("invalid X-Amz-Content-Sha256")
-	errUnsignedPayloadHash   = AuthError("X-Amz-Content-Sha256 must be signed")
-	errPayloadHashMismatch   = AuthError("payload hash does not match")
+	errUnknownAccessKey          = AuthError("unknown access key")
+	errSignatureMismatch         = AuthError("signature does not match")
+	errMissingAuth               = AuthError("missing Authorization header")
+	errMissingAuthSignature      = AuthError("Signature not found in Authorization")
+	errMissingSignature          = AuthError("missing X-Amz-Signature")
+	errDuplicatePresignParameter = AuthError("duplicate SigV4 presign parameter")
+	errMissingAccessKey          = AuthError("access key not found in credentials")
+	errMissingSignedHeaders      = AuthError("SignedHeaders not found in Authorization")
+	errInvalidCredential         = AuthError("invalid credential format")
+	errMissingExpires            = AuthError("missing X-Amz-Expires")
+	errInvalidExpires            = AuthError("invalid X-Amz-Expires")
+	errUnsupportedAuthScheme     = AuthError("unsupported authorization scheme")
+	errRequestExpired            = AuthError("request timestamp outside allowed skew")
+	errPresignExpired            = AuthError("presigned request has expired")
+	errMissingDate               = AuthError("missing X-Amz-Date")
+	errUnsignedDate              = AuthError("X-Amz-Date must be signed")
+	errInvalidPayloadHash        = AuthError("invalid X-Amz-Content-Sha256")
+	errUnsignedPayloadHash       = AuthError("X-Amz-Content-Sha256 must be signed")
+	errPayloadHashMismatch       = AuthError("payload hash does not match")
 )
 
 type AuthError string
