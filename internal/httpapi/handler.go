@@ -120,6 +120,28 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var (
+		principal   *auth.Principal
+		authChecked bool
+	)
+	if hasInboundAuth(r) {
+		principal, err = h.deps.Authenticator.Authenticate(r)
+		authChecked = true
+		defer replaybody.Release(r)
+		if err != nil {
+			logger.Warn("auth failed", "error", err)
+			if writeReplayError(w, err, requestID) {
+				return
+			}
+			if auth.IsSignatureMismatch(err) {
+				xmls3.WriteSignatureDoesNotMatch(w, requestID)
+				return
+			}
+			xmls3.WriteAccessDenied(w, requestID)
+			return
+		}
+	}
+
 	if s3ops.IsMultipart(r) {
 		logger.Info("rejecting multipart", "operation", op)
 		xmls3.WriteNotImplemented(w, requestID)
@@ -130,19 +152,21 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, err := h.deps.Authenticator.Authenticate(r)
-	defer replaybody.Release(r)
-	if err != nil {
-		logger.Warn("auth failed", "error", err)
-		if writeReplayError(w, err, requestID) {
+	if !authChecked {
+		principal, err = h.deps.Authenticator.Authenticate(r)
+		defer replaybody.Release(r)
+		if err != nil {
+			logger.Warn("auth failed", "error", err)
+			if writeReplayError(w, err, requestID) {
+				return
+			}
+			if auth.IsSignatureMismatch(err) {
+				xmls3.WriteSignatureDoesNotMatch(w, requestID)
+				return
+			}
+			xmls3.WriteAccessDenied(w, requestID)
 			return
 		}
-		if auth.IsSignatureMismatch(err) {
-			xmls3.WriteSignatureDoesNotMatch(w, requestID)
-			return
-		}
-		xmls3.WriteAccessDenied(w, requestID)
-		return
 	}
 
 	if op == s3ops.OpListBuckets {
@@ -436,4 +460,21 @@ func connectionHeaderTokens(headers http.Header) map[string]struct{} {
 		}
 	}
 	return tokens
+}
+
+func hasInboundAuth(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.Header.Get("Authorization") != "" {
+		return true
+	}
+	for key := range r.URL.Query() {
+		switch strings.ToLower(key) {
+		case "x-amz-algorithm", "x-amz-credential", "x-amz-date", "x-amz-expires",
+			"x-amz-security-token", "x-amz-signature", "x-amz-signedheaders":
+			return true
+		}
+	}
+	return false
 }

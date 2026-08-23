@@ -470,6 +470,32 @@ func TestHandler_SignatureMismatchReturnsSignatureDoesNotMatch(t *testing.T) {
 	}
 }
 
+func TestHandler_PresignedUnsupportedQueryAuthenticatesBeforeRejectingOperation(t *testing.T) {
+	dispatcher := &countingDispatcher{}
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{err: auth.AuthError("signature does not match")},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    dispatcher,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key?response-content-type=text%2Fplain&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ak%2F20260823%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260823T000000Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=abcdef", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+	if !strings.Contains(rr.Body.String(), "SignatureDoesNotMatch") {
+		t.Fatalf("body = %q, want SignatureDoesNotMatch", rr.Body.String())
+	}
+	if dispatcher.calls != 0 {
+		t.Fatalf("dispatch calls = %d, want 0", dispatcher.calls)
+	}
+}
+
 func TestHandler_AuthReplayErrorsUseReplayStatusMapping(t *testing.T) {
 	tests := []struct {
 		name     string

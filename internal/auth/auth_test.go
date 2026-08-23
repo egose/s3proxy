@@ -136,7 +136,7 @@ func TestSigV4Static_PrincipalSnapshotsPolicy(t *testing.T) {
 	allowRoutes[0] = "route.mutated"
 	allowOps[0] = string(s3ops.OpDeleteObject)
 	visibleBuckets[0] = "mutated"
-	client.SecretKey = "mutated-secret"
+	client.SecretKey = "mutated-secret" // pragma: allowlist secret
 
 	p, err := authenticator.Authenticate(signedUnsignedPayloadRequest(t, ak, sk))
 	if err != nil {
