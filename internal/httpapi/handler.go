@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,16 +25,15 @@ import (
 )
 
 type Dependencies struct {
-	Addressing         config.Addressing
-	ReplayBodyMaxBytes int64
-	ReplayBudget       *replaybody.Budget
-	Authenticator      Authenticator
-	Authorizer         Authorizer
-	Router             RouteResolver
-	Rewriter           Rewriter
-	Dispatcher         Dispatcher
-	Buckets            BucketLister
-	Logger             *slog.Logger
+	Addressing    config.Addressing
+	ReplayBudget  *replaybody.Budget
+	Authenticator Authenticator
+	Authorizer    Authorizer
+	Router        RouteResolver
+	Rewriter      Rewriter
+	Dispatcher    Dispatcher
+	Buckets       BucketLister
+	Logger        *slog.Logger
 }
 
 type Authenticator interface {
@@ -64,9 +65,6 @@ func NewHandler(deps Dependencies) http.Handler {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
 	}
-	if deps.ReplayBudget == nil {
-		deps.ReplayBudget = replaybody.NewBudget(deps.ReplayBodyMaxBytes, replaybody.DefaultAggregateMaxBytes)
-	}
 	return &handler{deps: deps}
 }
 
@@ -87,7 +85,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		logger.Info("request complete",
 			"method", r.Method,
-			"path", r.URL.Path,
 			"status", recorder.statusCode(),
 			"bytes", recorder.bytes,
 			"duration_ms", time.Since(start).Milliseconds(),
@@ -137,6 +134,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer replaybody.Release(r)
 	if err != nil {
 		logger.Warn("auth failed", "error", err)
+		if writeReplayError(w, err, requestID) {
+			return
+		}
 		if auth.IsSignatureMismatch(err) {
 			xmls3.WriteSignatureDoesNotMatch(w, requestID)
 			return
@@ -157,7 +157,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	matches, err := h.deps.Router.Resolve(ctx, op)
 	if err != nil {
-		logger.Info("no route", "bucket", ctx.Bucket, "key", ctx.Key, "operation", op)
+		logger.Info("no route", "operation", op)
 		xmls3.WriteNoSuchBucket(w, requestID, ctx.Bucket)
 		return
 	}
@@ -171,14 +171,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(matches) > 1 {
+		if h.deps.ReplayBudget == nil {
+			logger.Error("replay budget is not configured")
+			xmls3.WriteInternalError(w, requestID)
+			return
+		}
 		if err := h.deps.ReplayBudget.Ensure(r); err != nil {
 			logger.Error("request body read failed", "error", err)
-			if replaybody.IsTooLarge(err) {
-				xmls3.WriteError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Request body is too large for multi-destination replay.", requestID)
-				return
-			}
-			if replaybody.IsBudgetExhausted(err) {
-				xmls3.WriteError(w, http.StatusServiceUnavailable, "SlowDown", "Aggregate replay body memory is exhausted. Retry later.", requestID)
+			if writeReplayError(w, err, requestID) {
 				return
 			}
 			xmls3.WriteBadGateway(w, requestID)
@@ -187,11 +187,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var primary *s3.Response
-	for _, match := range matches {
+	for i, match := range matches {
 		if len(matches) > 1 {
 			if err := replaybody.Reset(r); err != nil {
 				logger.Error("request body reset failed", "error", err)
-				closeS3Response(primary)
+				closeS3Response(r.Context(), logger, primary)
 				xmls3.WriteBadGateway(w, requestID)
 				return
 			}
@@ -200,33 +200,29 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rwResult, err := h.deps.Rewriter.Apply(ctx, match.Route.Rewrite, match.Captures)
 		if err != nil {
 			logger.Error("rewrite failed", "route", match.Route.Name, "error", err)
-			closeS3Response(primary)
+			closeS3Response(r.Context(), logger, primary)
 			xmls3.WriteInternalError(w, requestID)
 			return
 		}
 
-		matchLogger := logger.With("route", match.Route.Name, "bucket", rwResult.Bucket, "key", rwResult.Key)
+		matchLogger := logger.With("route", match.Route.Name, "operation", op)
 		dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rwResult)
 		logDestinationAttempts(logger, match.Route.Name, op, dispResult)
+		logCleanupErrors(logger, match.Route.Name, dispResult)
 		if err != nil {
-			matchLogger.Error("dispatch failed", "error", err)
-			closeS3Response(primary)
-			if replaybody.IsTooLarge(err) {
-				xmls3.WriteError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Request body is too large for multi-destination replay.", requestID)
-				return
-			}
-			if replaybody.IsBudgetExhausted(err) {
-				xmls3.WriteError(w, http.StatusServiceUnavailable, "SlowDown", "Aggregate replay body memory is exhausted. Retry later.", requestID)
+			matchLogger.Error("dispatch failed", "error", safeLogError(err))
+			closeS3Response(r.Context(), logger, primary)
+			if writeReplayError(w, err, requestID) {
 				return
 			}
 			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.StatusCode >= http.StatusBadRequest {
 				if err := writeS3Response(w, dispResult.Primary); err != nil {
-					matchLogger.Error("response copy failed", "error", err)
+					matchLogger.Error("response copy failed", "error", safeLogError(err))
 				}
 				return
 			}
 			if dispResult != nil {
-				closeS3Response(dispResult.Primary)
+				closeS3Response(r.Context(), logger, dispResult.Primary)
 			}
 			xmls3.WriteBadGateway(w, requestID)
 			return
@@ -234,23 +230,32 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if dispResult != nil && dispResult.Primary != nil {
 			if dispResult.Primary.StatusCode >= http.StatusBadRequest {
-				closeS3Response(primary)
+				closeS3Response(r.Context(), logger, primary)
 				if err := writeS3Response(w, dispResult.Primary); err != nil {
-					matchLogger.Error("response copy failed", "error", err)
+					matchLogger.Error("response copy failed", "error", safeLogError(err))
 				}
 				return
 			}
 			if primary == nil {
 				primary = dispResult.Primary
+				if s3ops.IsWrite(op) && i < len(matches)-1 {
+					buffered, err := s3.BufferWriteResponse(r.Context(), primary)
+					if err != nil {
+						matchLogger.Error("response retention failed", "error", err)
+						xmls3.WriteBadGateway(w, requestID)
+						return
+					}
+					primary = buffered
+				}
 			} else {
-				closeS3Response(dispResult.Primary)
+				closeS3Response(r.Context(), logger, dispResult.Primary)
 			}
 		}
 	}
 
 	if primary != nil {
 		if err := writeS3Response(w, primary); err != nil {
-			logger.Error("response copy failed", "error", err)
+			logger.Error("response copy failed", "error", safeLogError(err))
 		}
 		return
 	}
@@ -276,8 +281,22 @@ func (h *handler) handleListBuckets(w http.ResponseWriter, principal *auth.Princ
 	xmls3.WriteListBuckets(w, ownerID, ownerName, entries)
 }
 
-func closeS3Response(resp *s3.Response) {
-	s3.DrainAndClose(resp)
+func closeS3Response(ctx context.Context, logger *slog.Logger, resp *s3.Response) {
+	if err := s3.DrainAndCloseContext(ctx, resp); err != nil && logger != nil {
+		logger.Warn("response cleanup failed", "error", safeLogError(err))
+	}
+}
+
+func writeReplayError(w http.ResponseWriter, err error, requestID string) bool {
+	if replaybody.IsTooLarge(err) {
+		xmls3.WriteError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Request body is too large for replay.", requestID)
+		return true
+	}
+	if replaybody.IsBudgetExhausted(err) {
+		xmls3.WriteError(w, http.StatusServiceUnavailable, "SlowDown", "Aggregate replay body memory is exhausted. Retry later.", requestID)
+		return true
+	}
+	return false
 }
 
 func writeS3Response(w http.ResponseWriter, resp *s3.Response) error {
@@ -344,7 +363,7 @@ func (r *statusRecorder) statusCode() int {
 }
 
 func logDestinationAttempts(logger *slog.Logger, route string, op s3ops.Operation, result *dispatch.Result) {
-	if result == nil || (len(result.Attempts) < 2 && len(result.Errors) == 0) {
+	if result == nil || (len(result.Attempts) < 2 && result.FailureCount() == 0) {
 		return
 	}
 	for _, attempt := range result.Attempts {
@@ -357,12 +376,42 @@ func logDestinationAttempts(logger *slog.Logger, route string, op s3ops.Operatio
 			attrs = append(attrs, "status", attempt.StatusCode)
 		}
 		if attempt.Error != nil {
-			attrs = append(attrs, "error", attempt.Error)
+			attrs = append(attrs, "error", safeLogError(attempt.Error))
 			logger.Warn("destination attempt failed", attrs...)
 			continue
 		}
 		logger.Info("destination attempt succeeded", attrs...)
 	}
+}
+
+func logCleanupErrors(logger *slog.Logger, route string, result *dispatch.Result) {
+	if result == nil || len(result.CleanupErrors) == 0 {
+		return
+	}
+	for target, err := range result.CleanupErrors {
+		logger.Warn("response cleanup failed", "route", route, "target", target, "error", safeLogError(err))
+	}
+}
+
+var logURLPattern = regexp.MustCompile(`https?://[^\s"']+`)
+
+func safeLogError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return logURLPattern.ReplaceAllStringFunc(err.Error(), safeLogURL)
+}
+
+func safeLogURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "[redacted-url]"
+	}
+	host := u.Hostname()
+	if port := u.Port(); port != "" {
+		host += ":" + port
+	}
+	return u.Scheme + "://" + host
 }
 
 func isHopByHopHeader(name string, connectionTokens map[string]struct{}) bool {

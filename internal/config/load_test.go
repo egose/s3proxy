@@ -1,11 +1,14 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/egose/s3proxy/internal/s3op"
 )
 
 const exampleConfig = `
@@ -720,6 +723,107 @@ route "r" {
 	if got, want := rt.Routes[0].ReadPreference, ReadRandom; got != want {
 		t.Fatalf("ReadPreference = %q, want %q", got, want)
 	}
+}
+
+func TestLoadFile_RejectsDuplicateDestinationRefs(t *testing.T) {
+	tests := []struct {
+		name         string
+		destinations string
+	}{
+		{name: "plain", destinations: `destinations = ["primary", "primary"]`},
+		{name: "qualified", destinations: `destinations = ["primary", "target.s3.primary"]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := strings.Replace(exampleConfig, `destinations = ["primary"]`, tt.destinations, 1)
+			_, err := LoadFile(writeTmpConfig(t, cfg))
+			if err == nil {
+				t.Fatal("expected error for duplicate destination")
+			}
+			for _, want := range []string{`route "images_rw"`, `duplicate target "primary"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadFile_RejectsDuplicateRouteOperations(t *testing.T) {
+	cfg := strings.Replace(exampleConfig, `operations   = ["GetObject", "PutObject"]`, `operations   = ["GetObject", "GetObject"]`, 1)
+	_, err := LoadFile(writeTmpConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for duplicate operation")
+	}
+	if want := `route "images_rw": operations contain duplicate entry "GetObject"`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want substring %q", err.Error(), want)
+	}
+}
+
+func TestValidateRoutes_OperationCapabilitiesMatchS3Op(t *testing.T) {
+	for _, op := range s3op.DeclaredOperations() {
+		op := op
+		t.Run(string(op), func(t *testing.T) {
+			validateSingleOpRoute := func(route Route) error {
+				return validateRoutes([]Route{route}, capabilityParsers(), capabilityTargets())
+			}
+
+			err := validateSingleOpRoute(capabilityRoute([]string{string(op)}, DispatchFirst, MatchStop, ReadFirst))
+			if s3op.IsConfigurable(string(op)) && err != nil {
+				t.Fatalf("dispatch=first route rejected configurable op: %v", err)
+			}
+			if !s3op.IsConfigurable(string(op)) && err == nil {
+				t.Fatal("dispatch=first route accepted non-configurable op")
+			}
+
+			err = validateSingleOpRoute(capabilityRoute([]string{string(op)}, DispatchAll, MatchStop, ReadFirst))
+			wantFanoutOnly := s3op.IsConfigurable(string(op)) && s3op.SupportsFanout(op)
+			if wantFanoutOnly && err != nil {
+				t.Fatalf("dispatch=all route rejected fan-out op: %v", err)
+			}
+			if !wantFanoutOnly && err == nil {
+				t.Fatal("dispatch=all route accepted op without configurable fan-out capability")
+			}
+
+			err = validateSingleOpRoute(capabilityRoute([]string{string(op)}, DispatchFirst, MatchContinue, ReadFirst))
+			wantContinue := s3op.IsConfigurable(string(op)) && s3op.IsWrite(op)
+			if wantContinue && err != nil {
+				t.Fatalf("on_match=continue route rejected write op: %v", err)
+			}
+			if !wantContinue && err == nil {
+				t.Fatal("on_match=continue route accepted op without configurable write capability")
+			}
+
+			if s3op.IsConfigurable(string(op)) && s3op.IsRead(op) {
+				err = validateSingleOpRoute(capabilityRoute([]string{string(op), string(s3op.PutObject)}, DispatchAll, MatchStop, ReadRandom))
+				if err != nil {
+					t.Fatalf("dispatch=all mixed read/write route rejected read op: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func capabilityRoute(ops []string, dispatch DispatchMode, onMatch MatchMode, readPreference ReadPreference) Route {
+	return Route{
+		Name:            "r",
+		ParserRef:       "p",
+		Operations:      ops,
+		DestinationRefs: []string{"t"},
+		Dispatch:        dispatch,
+		OnMatch:         onMatch,
+		ReadPreference:  readPreference,
+	}
+}
+
+func capabilityParsers() map[string]Parser {
+	return map[string]Parser{"p": {Name: "p", Kind: ParserPathPrefix, Prefix: "/p"}}
+}
+
+func capabilityTargets() map[string]S3Target {
+	endpoint, _ := url.Parse("https://example.test")
+	return map[string]S3Target{"t": {Name: "t", EndpointURL: endpoint}}
 }
 
 func TestLoadFile_RejectsCopyObject(t *testing.T) {

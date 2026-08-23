@@ -23,6 +23,19 @@ This page focuses on the proxy-facing contract, supported S3 operations, and the
 | `CopyObject`                | No        | Returns `NotImplemented`             |
 | Multipart upload operations | No        | Return `NotImplemented`              |
 
+## Supported Query Keys
+
+The v1 API fails closed at request classification. A request with a query key outside the supported operation contract returns `NotImplemented` before route dispatch.
+
+Inbound SigV4 presign query keys are accepted for authentication and are not forwarded to backends: `X-Amz-Algorithm`, `X-Amz-Credential`, `X-Amz-Date`, `X-Amz-Expires`, `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-SignedHeaders`.
+
+| Operation                                                                           | Supported non-auth query keys                                                                                                                            |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, `HeadBucket`, `ListBuckets` | none, except optional AWS SDK `x-id` matching the operation name                                                                                         |
+| `ListObjectsV2`                                                                     | `list-type=2`, `continuation-token`, `delimiter`, `encoding-type`, `fetch-owner`, `max-keys`, `prefix`, `start-after`, and optional `x-id=ListObjectsV2` |
+
+Unsupported query operations include `acl`, `tagging`, `retention`, `legal-hold`, `torrent`, `versioning`, `versions`, `versionId`, `restore`, `select`, response header overrides such as `response-content-type`, and multipart variants such as `uploads`, `uploadId`, and `partNumber`.
+
 ## Addressing Modes
 
 The proxy accepts:

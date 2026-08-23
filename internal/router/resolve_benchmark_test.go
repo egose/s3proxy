@@ -10,7 +10,7 @@ import (
 )
 
 func BenchmarkResolvePathPrefix(b *testing.B) {
-	r := NewResolver(buildTestRuntime())
+	r := newTestResolver(buildTestRuntime())
 	ctx := &requestctx.Context{RawPath: "/images/cat.jpg", Bucket: "images", Key: "cat.jpg"}
 
 	b.ReportAllocs()
@@ -58,7 +58,7 @@ func BenchmarkMatchParserPathPrefix(b *testing.B) {
 }
 
 func BenchmarkResolveBucketRegex(b *testing.B) {
-	r := NewResolver(buildTestRuntime())
+	r := newTestResolver(buildTestRuntime())
 	ctx := &requestctx.Context{Bucket: "tenant-acme-logs", Key: "file.log"}
 
 	b.ReportAllocs()

@@ -26,24 +26,40 @@ type sigv4StaticAuthenticator struct {
 	verifier *sigV4Verifier
 }
 
-func NewAuthenticator(cfg config.Auth) (Authenticator, error) {
-	return NewAuthenticatorWithReplayBudget(cfg, nil)
-}
-
-func NewAuthenticatorWithReplayBudget(cfg config.Auth, replayBudget *replaybody.Budget) (Authenticator, error) {
+func NewAuthenticator(cfg config.Auth, replayBudget *replaybody.Budget) (Authenticator, error) {
 	switch cfg.Mode {
 	case config.AuthModeNone:
 		return &noneAuthenticator{}, nil
 	case config.AuthModeSigV4Static:
+		if replayBudget == nil {
+			return nil, fmt.Errorf("replay budget is required for %s auth", cfg.Mode)
+		}
 		clientsByAK := make(map[string]config.Client, len(cfg.Clients))
 		for _, c := range cfg.Clients {
-			clientsByAK[c.AccessKey] = c
+			clientsByAK[c.AccessKey] = cloneClient(c)
 		}
 		return &sigv4StaticAuthenticator{
 			verifier: newSigV4Verifier(clientsByAK, "us-east-1", replayBudget),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported auth mode %q", cfg.Mode)
+	}
+}
+
+func cloneClient(c config.Client) config.Client {
+	c.AllowRoutes = append([]string(nil), c.AllowRoutes...)
+	c.AllowOps = append([]string(nil), c.AllowOps...)
+	c.VisibleBuckets = append([]string(nil), c.VisibleBuckets...)
+	return c
+}
+
+func principalFromClient(c config.Client) *Principal {
+	return &Principal{
+		Name:           c.Name,
+		AccessKey:      c.AccessKey,
+		AllowRoutes:    append([]string(nil), c.AllowRoutes...),
+		AllowOps:       append([]string(nil), c.AllowOps...),
+		VisibleBuckets: append([]string(nil), c.VisibleBuckets...),
 	}
 }
 
@@ -64,7 +80,7 @@ type Authorizer interface {
 
 type staticAuthorizer struct{}
 
-func NewAuthorizer(cfg config.Auth) Authorizer {
+func NewAuthorizer() Authorizer {
 	return &staticAuthorizer{}
 }
 

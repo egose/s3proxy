@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -52,6 +53,103 @@ func TestHandler_CopyObjectReturnsNotImplemented(t *testing.T) {
 	}
 }
 
+func TestHandler_UnsupportedQueryOperationsDoNotDispatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		headers http.Header
+	}{
+		{name: "get acl", method: http.MethodGet, path: "/bucket/key?acl="},
+		{name: "put tagging", method: http.MethodPut, path: "/bucket/key?tagging="},
+		{name: "delete tagging", method: http.MethodDelete, path: "/bucket/key?tagging="},
+		{name: "retention", method: http.MethodGet, path: "/bucket/key?retention="},
+		{name: "legal hold", method: http.MethodPut, path: "/bucket/key?legal-hold="},
+		{name: "torrent", method: http.MethodGet, path: "/bucket/key?torrent="},
+		{name: "version id", method: http.MethodGet, path: "/bucket/key?versionId=1"},
+		{name: "restore", method: http.MethodPost, path: "/bucket/key?restore="},
+		{name: "select", method: http.MethodPost, path: "/bucket/key?select=&select-type=2"},
+		{name: "response override", method: http.MethodGet, path: "/bucket/key?response-content-type=text%2Fplain"},
+		{name: "multipart create", method: http.MethodPost, path: "/bucket/key?uploads="},
+		{name: "multipart upload part", method: http.MethodPut, path: "/bucket/key?partNumber=1&uploadId=abc"},
+		{name: "multipart complete", method: http.MethodPost, path: "/bucket/key?uploadId=abc"},
+		{name: "copy object", method: http.MethodPut, path: "/bucket/key", headers: http.Header{"X-Amz-Copy-Source": []string{"/bucket/src"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dispatcher := &countingDispatcher{}
+			h := NewHandler(Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{},
+				Authorizer:    stubAuthorizer{},
+				Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+				Rewriter:      stubRewriter{},
+				Dispatcher:    dispatcher,
+			})
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader("payload"))
+			for key, vals := range tt.headers {
+				for _, val := range vals {
+					req.Header.Add(key, val)
+				}
+			}
+			rr := httptest.NewRecorder()
+
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusNotImplemented {
+				t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotImplemented)
+			}
+			if dispatcher.calls != 0 {
+				t.Fatalf("dispatch calls = %d, want 0", dispatcher.calls)
+			}
+		})
+	}
+}
+
+func TestHandler_SupportedQueryOperationsDispatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		wantOp s3ops.Operation
+	}{
+		{name: "get object", method: http.MethodGet, path: "/bucket/key?x-id=GetObject", wantOp: s3ops.OpGetObject},
+		{name: "head object", method: http.MethodHead, path: "/bucket/key?x-id=HeadObject", wantOp: s3ops.OpHeadObject},
+		{name: "put object", method: http.MethodPut, path: "/bucket/key?x-id=PutObject", wantOp: s3ops.OpPutObject},
+		{name: "delete object", method: http.MethodDelete, path: "/bucket/key?x-id=DeleteObject", wantOp: s3ops.OpDeleteObject},
+		{name: "list objects v2", method: http.MethodGet, path: "/bucket?list-type=2&prefix=logs%2F&delimiter=%2F&max-keys=10&x-id=ListObjectsV2", wantOp: s3ops.OpListObjectsV2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dispatcher := &countingDispatcher{response: &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}}
+			h := NewHandler(Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{},
+				Authorizer:    stubAuthorizer{},
+				Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+				Rewriter:      stubRewriter{},
+				Dispatcher:    dispatcher,
+			})
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader("payload"))
+			rr := httptest.NewRecorder()
+
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+			}
+			if dispatcher.calls != 1 {
+				t.Fatalf("dispatch calls = %d, want 1", dispatcher.calls)
+			}
+			if dispatcher.op != tt.wantOp {
+				t.Fatalf("operation = %s, want %s", dispatcher.op, tt.wantOp)
+			}
+		})
+	}
+}
+
 func TestHandler_RootUnsupportedMethodsReturnNotImplemented(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
@@ -80,6 +178,7 @@ func TestHandler_ContinueDispatchesAllWriteMatches(t *testing.T) {
 	}
 	h := NewHandler(Dependencies{
 		Addressing:    config.Addressing{PathStyle: true},
+		ReplayBudget:  replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes),
 		Authenticator: stubAuthenticator{},
 		Authorizer:    stubAuthorizer{},
 		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
@@ -110,6 +209,7 @@ func TestHandler_ContinueRouteHTTPFailureDoesNotReturnEarlierSuccess(t *testing.
 	}
 	h := NewHandler(Dependencies{
 		Addressing:    config.Addressing{PathStyle: true},
+		ReplayBudget:  replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes),
 		Authenticator: stubAuthenticator{},
 		Authorizer:    stubAuthorizer{},
 		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
@@ -144,6 +244,7 @@ func TestHandler_LaterDispatchFailureClosesEarlierSuccess(t *testing.T) {
 	}
 	h := NewHandler(Dependencies{
 		Addressing:    config.Addressing{PathStyle: true},
+		ReplayBudget:  replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes),
 		Authenticator: stubAuthenticator{},
 		Authorizer:    stubAuthorizer{},
 		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
@@ -172,6 +273,7 @@ func TestHandler_LaterResetFailureClosesEarlierSuccess(t *testing.T) {
 	}
 	h := NewHandler(Dependencies{
 		Addressing:    config.Addressing{PathStyle: true},
+		ReplayBudget:  replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes),
 		Authenticator: stubAuthenticator{},
 		Authorizer:    stubAuthorizer{},
 		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
@@ -206,6 +308,7 @@ func TestHandler_LaterRewriteFailureClosesEarlierSuccess(t *testing.T) {
 	}
 	h := NewHandler(Dependencies{
 		Addressing:    config.Addressing{PathStyle: true},
+		ReplayBudget:  replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes),
 		Authenticator: stubAuthenticator{},
 		Authorizer:    stubAuthorizer{},
 		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
@@ -297,6 +400,37 @@ func TestHandler_DispatchErrorWithSuccessfulPrimaryReturnsBadGateway(t *testing.
 	}
 }
 
+func TestHandler_DispatchErrorWithPrimaryErrorWritesAndClosesBody(t *testing.T) {
+	body := &trackingReadCloser{Reader: strings.NewReader("<Error>denied</Error>")}
+	dispatcher := &stubFanout{
+		results: []*dispatch.Result{{Primary: &s3.Response{StatusCode: http.StatusForbidden, Header: http.Header{}, Body: body}}},
+		errs:    []error{errors.New("fan-out had 1 failures")},
+	}
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    dispatcher,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("payload"))
+	req.ContentLength = int64(len("payload"))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+	if got, want := rr.Body.String(), "<Error>denied</Error>"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+	if !body.closed {
+		t.Fatal("expected primary error body to be closed")
+	}
+}
+
 func TestHandler_ReturnsInvalidRequestWhenAddressingModeDoesNotMatch(t *testing.T) {
 	h := NewHandler(Dependencies{
 		Addressing: config.Addressing{
@@ -336,15 +470,47 @@ func TestHandler_SignatureMismatchReturnsSignatureDoesNotMatch(t *testing.T) {
 	}
 }
 
+func TestHandler_AuthReplayErrorsUseReplayStatusMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		status   int
+		codeText string
+	}{
+		{name: "per request limit", err: replaybody.ErrBodyTooLarge, status: http.StatusRequestEntityTooLarge, codeText: "EntityTooLarge"},
+		{name: "aggregate budget", err: replaybody.ErrBudgetExhausted, status: http.StatusServiceUnavailable, codeText: "SlowDown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(Dependencies{
+				Addressing:    config.Addressing{PathStyle: true},
+				Authenticator: stubAuthenticator{err: tt.err},
+			})
+			req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("payload"))
+			rr := httptest.NewRecorder()
+
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != tt.status {
+				t.Fatalf("status = %d, want %d", rr.Code, tt.status)
+			}
+			if !strings.Contains(rr.Body.String(), tt.codeText) {
+				t.Fatalf("body = %q, want %s", rr.Body.String(), tt.codeText)
+			}
+		})
+	}
+}
+
 func TestHandler_MultiRouteOversizedBodyReturnsEntityTooLarge(t *testing.T) {
 	h := NewHandler(Dependencies{
-		Addressing:         config.Addressing{PathStyle: true},
-		ReplayBodyMaxBytes: 1,
-		Authenticator:      stubAuthenticator{},
-		Authorizer:         stubAuthorizer{},
-		Router:             stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
-		Rewriter:           stubRewriter{},
-		Dispatcher:         &stubFanout{},
+		Addressing:    config.Addressing{PathStyle: true},
+		ReplayBudget:  replaybody.NewBudget(1, replaybody.DefaultAggregateMaxBytes),
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}, {Route: config.Route{Name: "two"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    &stubFanout{},
 	})
 	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("x"))
 	req.ContentLength = 2
@@ -406,6 +572,29 @@ func TestHandler_DispatchOversizedBodyReturnsEntityTooLarge(t *testing.T) {
 	}
 }
 
+func TestHandler_DispatchBudgetExhaustionReturnsSlowDown(t *testing.T) {
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    &stubFanout{errs: []error{replaybody.ErrBudgetExhausted}, results: []*dispatch.Result{nil}},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("payload"))
+	req.ContentLength = int64(len("payload"))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rr.Body.String(), "SlowDown") {
+		t.Fatalf("body = %q, want SlowDown", rr.Body.String())
+	}
+}
+
 func TestWriteS3Response_StripsHopByHopHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
 	writeS3Response(rr, &s3.Response{
@@ -431,6 +620,48 @@ func TestWriteS3Response_StripsHopByHopHeaders(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-End-To-End"); got != "ok" {
 		t.Fatalf("expected X-End-To-End to survive, got %q", got)
+	}
+}
+
+func TestHandler_ForwardsEncodedObjectBytesAndHeaders(t *testing.T) {
+	encoded := []byte("\x1f\x8bencoded-object-bytes")
+	dispatcher := &stubFanout{results: []*dispatch.Result{{Primary: &s3.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Encoding": []string{"gzip"},
+			"Content-Length":   []string{"22"},
+			"ETag":             []string{`"encoded-etag"`},
+		},
+		Body: io.NopCloser(bytes.NewReader(encoded)),
+	}}}}
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    dispatcher,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !bytes.Equal(rr.Body.Bytes(), encoded) {
+		t.Fatalf("body = %q, want encoded bytes %q", rr.Body.Bytes(), encoded)
+	}
+	resp := rr.Result()
+	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "22" {
+		t.Fatalf("Content-Length = %q, want 22", got)
+	}
+	if got := resp.Header.Get("ETag"); got != `"encoded-etag"` {
+		t.Fatalf("ETag = %q, want encoded-etag", got)
 	}
 }
 
@@ -467,6 +698,40 @@ func TestHandler_LogsAndClosesResponseBodyCopyError(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "response copy failed") || !strings.Contains(logs.String(), sentinel.Error()) {
 		t.Fatalf("logs = %q, want copy error", logs.String())
+	}
+}
+
+func TestHandler_LogsCleanupErrorsWithoutReplacingResult(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	dispatcher := &stubFanout{results: []*dispatch.Result{{
+		Primary:       &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))},
+		CleanupErrors: map[string]error{"replica": errors.New("close failed")},
+	}}}
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "one"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher:    dispatcher,
+		Logger:        logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got, want := rr.Body.String(), "ok"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+	for _, want := range []string{"response cleanup failed", "route=one", "target=replica", "close failed"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("logs = %q, want %q", logs.String(), want)
+		}
 	}
 }
 
@@ -601,6 +866,109 @@ func TestHandler_LogsDestinationAttempts(t *testing.T) {
 	}
 }
 
+func TestHandler_SingleTargetTransportFailureLogsOneSafeDestinationFailure(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	transportErr := &url.Error{
+		Op:  "Get",
+		URL: "http://user:pass@upstream.local/private-bucket/secret-object?token=sentinel-query-value", // pragma: allowlist secret
+		Err: errors.New("dial tcp connection refused"),
+	}
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "objects"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher: &stubFanout{
+			results: []*dispatch.Result{{Attempts: []dispatch.Attempt{{Target: "primary", Error: transportErr}}}},
+			errs:    []error{transportErr},
+		},
+		Logger: logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/private-bucket/secret-object?x-id=GetObject", nil)
+	req.Header.Set("X-Request-Id", "req-safe")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	logText := logs.String()
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadGateway)
+	}
+	if got, want := strings.Count(logText, "destination attempt failed"), 1; got != want {
+		t.Fatalf("destination failure logs = %d, want %d: %q", got, want, logText)
+	}
+	for _, want := range []string{"request_id=req-safe", "route=objects", "operation=GetObject", "target=primary", "dispatch failed"} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("logs = %q, want %q", logText, want)
+		}
+	}
+	for _, forbidden := range []string{"sentinel-query-value", "user:pass", "private-bucket", "secret-object"} {
+		if strings.Contains(logText, forbidden) {
+			t.Fatalf("logs = %q, must not contain %q", logText, forbidden)
+		}
+	}
+}
+
+func TestHandler_SingleTargetSuccessDoesNotLogDestinationAttempt(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Authorizer:    stubAuthorizer{},
+		Router:        stubResolver{matches: []router.Match{{Route: config.Route{Name: "objects"}}}},
+		Rewriter:      stubRewriter{},
+		Dispatcher: &stubFanout{results: []*dispatch.Result{{
+			Primary:  &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))},
+			Attempts: []dispatch.Attempt{{Target: "primary", StatusCode: http.StatusOK}},
+		}}},
+		Logger: logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if strings.Contains(logs.String(), "destination attempt") {
+		t.Fatalf("logs = %q, want no destination attempt log", logs.String())
+	}
+}
+
+func TestHandler_RouteMissLogsOmitObjectIdentifiers(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	h := NewHandler(Dependencies{
+		Addressing:    config.Addressing{PathStyle: true},
+		Authenticator: stubAuthenticator{},
+		Router:        stubResolver{err: errors.New("no route")},
+		Logger:        logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/private-bucket/secret-object?x-id=GetObject", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	logText := logs.String()
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	for _, want := range []string{"no route", "operation=GetObject", "request complete", "status=404"} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("logs = %q, want %q", logText, want)
+		}
+	}
+	for _, forbidden := range []string{"private-bucket", "secret-object"} {
+		if strings.Contains(logText, forbidden) {
+			t.Fatalf("logs = %q, must not contain %q", logText, forbidden)
+		}
+	}
+}
+
 type stubAuthenticator struct {
 	principal *auth.Principal
 	err       error
@@ -679,6 +1047,18 @@ func (s *stubFanout) Dispatch(_ context.Context, match router.Match, _ *http.Req
 	}
 	s.index++
 	return result, err
+}
+
+type countingDispatcher struct {
+	calls    int
+	op       s3ops.Operation
+	response *s3.Response
+}
+
+func (d *countingDispatcher) Dispatch(_ context.Context, _ router.Match, _ *http.Request, op s3ops.Operation, _ rewrite.Result) (*dispatch.Result, error) {
+	d.calls++
+	d.op = op
+	return &dispatch.Result{Primary: d.response}, nil
 }
 
 type errAfterDataReadCloser struct {

@@ -13,8 +13,8 @@ import (
 
 type Match struct {
 	Route         config.Route
-	Destinations  []config.S3Target
-	EffectiveRead *config.S3Target
+	Destinations  []string
+	EffectiveRead string
 	Captures      map[string]string
 }
 
@@ -22,18 +22,18 @@ type RouteResolver interface {
 	Resolve(ctx *requestctx.Context, op s3ops.Operation) ([]Match, error)
 }
 
-func NewResolver(rt *config.Runtime) RouteResolver {
+func NewResolver(routes []config.Route, parsers map[string]config.Parser, targets []string) RouteResolver {
 	return &resolver{
-		routes:  cloneRoutes(rt.Routes),
-		parsers: cloneParsers(rt.Parsers),
-		targets: cloneTargets(rt.Targets),
+		routes:  cloneRoutes(routes),
+		parsers: cloneParsers(parsers),
+		targets: targetSet(targets),
 	}
 }
 
 type resolver struct {
 	routes  []config.Route
 	parsers map[string]config.Parser
-	targets map[string]config.S3Target
+	targets map[string]struct{}
 }
 
 func (r *resolver) Resolve(ctx *requestctx.Context, op s3ops.Operation) ([]Match, error) {
@@ -56,10 +56,10 @@ func (r *resolver) Resolve(ctx *requestctx.Context, op s3ops.Operation) ([]Match
 			continue
 		}
 
-		dests := make([]config.S3Target, 0, len(route.DestinationRefs))
+		dests := make([]string, 0, len(route.DestinationRefs))
 		for _, ref := range route.DestinationRefs {
-			if t, ok := r.targets[ref]; ok {
-				dests = append(dests, t)
+			if _, ok := r.targets[ref]; ok {
+				dests = append(dests, ref)
 			}
 		}
 		if len(dests) == 0 {
@@ -67,7 +67,7 @@ func (r *resolver) Resolve(ctx *requestctx.Context, op s3ops.Operation) ([]Match
 		}
 
 		match := Match{
-			Route:        route,
+			Route:        cloneRoute(route),
 			Destinations: dests,
 			Captures:     captures,
 		}
@@ -75,7 +75,7 @@ func (r *resolver) Resolve(ctx *requestctx.Context, op s3ops.Operation) ([]Match
 		if s3ops.IsRead(op) && len(dests) > 0 {
 			match.EffectiveRead = selectEffectiveRead(route, dests, ctx)
 		} else if len(dests) > 0 {
-			match.EffectiveRead = &dests[0]
+			match.EffectiveRead = dests[0]
 		}
 
 		matches = append(matches, match)
@@ -156,26 +156,26 @@ func routeAllowsOperation(route config.Route, op s3ops.Operation) bool {
 	return false
 }
 
-func selectEffectiveRead(route config.Route, dests []config.S3Target, ctx *requestctx.Context) *config.S3Target {
+func selectEffectiveRead(route config.Route, dests []string, ctx *requestctx.Context) string {
 	if len(dests) == 0 {
-		return nil
+		return ""
 	}
 	if len(dests) == 1 {
-		return &dests[0]
+		return dests[0]
 	}
 
 	switch route.ReadPreference {
 	case config.ReadFirst:
-		return &dests[0]
+		return dests[0]
 	case config.ReadRandom:
-		return &dests[rand.Intn(len(dests))]
+		return dests[rand.Intn(len(dests))]
 	case config.ReadHash:
 		idx := hashIndex(ctx.Bucket, ctx.Key, len(dests))
-		return &dests[idx]
+		return dests[idx]
 	case config.ReadOrderedFailover:
-		return &dests[0]
+		return dests[0]
 	}
-	return &dests[0]
+	return dests[0]
 }
 
 func hashIndex(bucket, key string, n int) int {
@@ -200,11 +200,15 @@ func hashIndex(bucket, key string, n int) int {
 func cloneRoutes(routes []config.Route) []config.Route {
 	out := make([]config.Route, len(routes))
 	for i, route := range routes {
-		out[i] = route
-		out[i].Operations = append([]string(nil), route.Operations...)
-		out[i].DestinationRefs = append([]string(nil), route.DestinationRefs...)
+		out[i] = cloneRoute(route)
 	}
 	return out
+}
+
+func cloneRoute(route config.Route) config.Route {
+	route.Operations = append([]string(nil), route.Operations...)
+	route.DestinationRefs = append([]string(nil), route.DestinationRefs...)
+	return route
 }
 
 func cloneParsers(parsers map[string]config.Parser) map[string]config.Parser {
@@ -215,14 +219,10 @@ func cloneParsers(parsers map[string]config.Parser) map[string]config.Parser {
 	return out
 }
 
-func cloneTargets(targets map[string]config.S3Target) map[string]config.S3Target {
-	out := make(map[string]config.S3Target, len(targets))
-	for name, target := range targets {
-		if target.EndpointURL != nil {
-			endpoint := *target.EndpointURL
-			target.EndpointURL = &endpoint
-		}
-		out[name] = target
+func targetSet(targets []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(targets))
+	for _, name := range targets {
+		out[name] = struct{}{}
 	}
 	return out
 }

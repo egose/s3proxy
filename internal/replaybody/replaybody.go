@@ -2,6 +2,7 @@ package replaybody
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,11 +12,10 @@ import (
 
 const DefaultMaxBytes int64 = 32 << 20
 const DefaultAggregateMaxBytes int64 = DefaultMaxBytes * 8
+const readChunkSize = 32 * 1024
 
 var ErrBodyTooLarge = errors.New("request body too large to replay")
 var ErrBudgetExhausted = errors.New("aggregate replay body budget exhausted")
-
-var defaultBudget = NewBudget(DefaultMaxBytes, DefaultAggregateMaxBytes)
 
 func IsTooLarge(err error) bool {
 	return errors.Is(err, ErrBodyTooLarge)
@@ -51,32 +51,45 @@ func (b *Budget) Used() int64 {
 	return b.used
 }
 
-func Ensure(req *http.Request) error {
-	return defaultBudget.Ensure(req)
-}
-
-func EnsureWithLimit(req *http.Request, maxBytes int64) error {
-	return NewBudget(maxBytes, DefaultAggregateMaxBytes).Ensure(req)
-}
-
 func (b *Budget) Ensure(req *http.Request) error {
 	if req.Body == nil || req.Body == http.NoBody || req.GetBody != nil {
 		return nil
 	}
 	if b == nil {
-		b = defaultBudget
+		return fmt.Errorf("replay budget is not configured")
 	}
 	maxBytes := b.maxRequestBytes
 	if req.ContentLength > maxBytes {
 		return ErrBodyTooLarge
 	}
-	body, err := b.read(req.Body, maxBytes)
+	original := req.Body
+	var closeOnce sync.Once
+	var closeErr error
+	closeOriginal := func() error {
+		closeOnce.Do(func() {
+			closeErr = original.Close()
+		})
+		return closeErr
+	}
+	done := make(chan struct{})
+	if ctxDone := req.Context().Done(); ctxDone != nil {
+		go func() {
+			select {
+			case <-ctxDone:
+				_ = closeOriginal()
+			case <-done:
+			}
+		}()
+	}
+	body, err := b.read(req.Context(), original, maxBytes, req.ContentLength)
+	close(done)
+	errClose := closeOriginal()
 	if err != nil {
 		return err
 	}
-	if err := req.Body.Close(); err != nil {
-		b.release(int64(len(body)))
-		return fmt.Errorf("close request body: %w", err)
+	if errClose != nil {
+		body.release(b)
+		return fmt.Errorf("close request body: %w", errClose)
 	}
 	install(req, body, b)
 	return nil
@@ -113,37 +126,69 @@ func Release(req *http.Request) error {
 	return err
 }
 
-func (b *Budget) read(src io.Reader, maxBytes int64) ([]byte, error) {
-	var body []byte
-	buf := make([]byte, 32*1024)
-	reserved := int64(0)
-	defer func() {
-		if reserved > int64(len(body)) {
-			b.release(reserved - int64(len(body)))
+func (b *Budget) read(ctx context.Context, src io.Reader, maxBytes, contentLength int64) (*bufferedBody, error) {
+	if contentLength > 0 {
+		return b.readKnown(ctx, src, contentLength)
+	}
+	return b.readUnknown(ctx, src, maxBytes)
+}
+
+func (b *Budget) readKnown(ctx context.Context, src io.Reader, length int64) (*bufferedBody, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.reserve(length); err != nil {
+		return nil, err
+	}
+	body := make([]byte, length)
+	if _, err := io.ReadFull(src, body); err != nil {
+		b.release(length)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
 		}
-	}()
+		return nil, fmt.Errorf("read request body: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		b.release(length)
+		return nil, err
+	}
+	return &bufferedBody{body: body, length: length, charged: length}, nil
+}
+
+func (b *Budget) readUnknown(ctx context.Context, src io.Reader, maxBytes int64) (*bufferedBody, error) {
+	var chunks [][]byte
+	buf := make([]byte, readChunkSize)
+	var length int64
+	var charged int64
 	for {
+		if err := ctx.Err(); err != nil {
+			b.release(charged)
+			return nil, err
+		}
 		n, err := src.Read(buf)
 		if n > 0 {
-			if int64(len(body)+n) > maxBytes {
-				b.release(reserved)
-				reserved = 0
+			if length+int64(n) > maxBytes {
+				b.release(charged)
 				return nil, ErrBodyTooLarge
 			}
 			if err := b.reserve(int64(n)); err != nil {
-				b.release(reserved)
-				reserved = 0
+				b.release(charged)
 				return nil, err
 			}
-			reserved += int64(n)
-			body = append(body, buf[:n]...)
+			charged += int64(n)
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			chunks = append(chunks, chunk)
+			length += int64(n)
 		}
 		if err == io.EOF {
-			return body, nil
+			return &bufferedBody{chunks: chunks, length: length, charged: charged}, nil
 		}
 		if err != nil {
-			b.release(reserved)
-			reserved = 0
+			b.release(charged)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, fmt.Errorf("read request body: %w", err)
 		}
 	}
@@ -174,14 +219,14 @@ func (b *Budget) release(n int64) {
 	b.mu.Unlock()
 }
 
-func install(req *http.Request, body []byte, budget *Budget) {
-	if body == nil {
+func install(req *http.Request, body *bufferedBody, budget *Budget) {
+	if body == nil || body.length == 0 {
 		req.Body = http.NoBody
 		req.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
 		req.ContentLength = 0
 		return
 	}
-	payload := &replayPayload{body: body, budget: budget}
+	payload := &replayPayload{body: body.body, chunks: body.chunks, length: body.length, charged: body.charged, budget: budget}
 	if done := req.Context().Done(); done != nil {
 		go func() {
 			<-done
@@ -189,27 +234,51 @@ func install(req *http.Request, body []byte, budget *Budget) {
 		}()
 	}
 	req.GetBody = func() (io.ReadCloser, error) {
-		return &replayReadCloser{Reader: bytes.NewReader(payload.body), payload: payload}, nil
+		return &replayReadCloser{Reader: payload.reader(), payload: payload}, nil
 	}
-	req.Body = &replayReadCloser{Reader: bytes.NewReader(payload.body), payload: payload, releaseOnClose: true}
-	req.ContentLength = int64(len(body))
+	req.Body = &replayReadCloser{Reader: payload.reader(), payload: payload, releaseOnClose: true}
+	req.ContentLength = payload.length
+}
+
+type bufferedBody struct {
+	body    []byte
+	chunks  [][]byte
+	length  int64
+	charged int64
+}
+
+func (b *bufferedBody) release(budget *Budget) {
+	if b == nil {
+		return
+	}
+	budget.release(b.charged)
+	b.charged = 0
 }
 
 type replayPayload struct {
-	body   []byte
-	budget *Budget
-	once   sync.Once
+	body    []byte
+	chunks  [][]byte
+	length  int64
+	charged int64
+	budget  *Budget
+	once    sync.Once
+}
+
+func (p *replayPayload) reader() io.Reader {
+	if p.body != nil {
+		return bytes.NewReader(p.body)
+	}
+	return &chunkReader{chunks: p.chunks, remaining: p.length}
 }
 
 func (p *replayPayload) release() {
 	p.once.Do(func() {
-		p.budget.release(int64(len(p.body)))
-		p.body = nil
+		p.budget.release(p.charged)
 	})
 }
 
 type replayReadCloser struct {
-	*bytes.Reader
+	io.Reader
 	payload        *replayPayload
 	releaseOnClose bool
 }
@@ -219,4 +288,33 @@ func (r *replayReadCloser) Close() error {
 		r.payload.release()
 	}
 	return nil
+}
+
+type chunkReader struct {
+	chunks    [][]byte
+	chunk     int
+	offset    int
+	remaining int64
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	written := 0
+	for written < len(p) && r.remaining > 0 {
+		chunk := r.chunks[r.chunk]
+		n := copy(p[written:], chunk[r.offset:])
+		written += n
+		r.offset += n
+		r.remaining -= int64(n)
+		if r.offset == len(chunk) {
+			r.chunk++
+			r.offset = 0
+		}
+	}
+	return written, nil
 }

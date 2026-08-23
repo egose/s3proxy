@@ -46,6 +46,47 @@ func mustURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
+func testTargets(t *testing.T, endpoint string, mutate ...func(*config.S3Target)) map[string]config.S3Target {
+	t.Helper()
+	target := config.S3Target{
+		Name:           "primary",
+		Endpoint:       endpoint,
+		EndpointURL:    mustURL(t, endpoint),
+		Region:         "us-east-1",
+		ForcePathStyle: true,
+		Credentials: config.StaticCredential{
+			AccessKey: "ak",
+			SecretKey: "sk",
+		},
+	}
+	for _, fn := range mutate {
+		fn(&target)
+	}
+	return map[string]config.S3Target{"primary": target}
+}
+
+func testBudget() *replaybody.Budget {
+	return replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes)
+}
+
+func newTestClient(t *testing.T, httpClient *http.Client, targets map[string]config.S3Target, budget *replaybody.Budget) Executor {
+	t.Helper()
+	client, err := NewClient(httpClient, targets, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func TestNewClientRequiresDependencies(t *testing.T) {
+	if _, err := NewClient(nil, testTargets(t, "https://s3.internal"), testBudget()); err == nil {
+		t.Fatal("expected missing HTTP client error")
+	}
+	if _, err := NewClient(&http.Client{}, testTargets(t, "https://s3.internal"), nil); err == nil {
+		t.Fatal("expected missing replay budget error")
+	}
+}
+
 func TestBuildTargetURL_PreservesEndpointBasePath(t *testing.T) {
 	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/source/object?list-type=2", nil)
 	if err != nil {
@@ -158,23 +199,13 @@ func TestClientDo_RespectsTargetTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL, func(target *config.S3Target) { target.Timeout = 20 * time.Millisecond }), testBudget())
 	_, err = client.Do(context.Background(), Request{
 		Operation: s3ops.OpGetObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Timeout:        20 * time.Millisecond,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if err == nil {
 		t.Fatal("expected timeout error")
@@ -188,6 +219,41 @@ func TestClientDo_RespectsTargetTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestClientDo_SanitizesTransportURLInErrors(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("dial tcp connection refused")
+	})}
+	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/bucket/key?token=sentinel-query-value", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := newTestClient(t, httpClient, testTargets(t, "http://user:pass@upstream.local"), testBudget())
+	_, err = client.Do(context.Background(), Request{
+		Operation: s3ops.OpGetObject,
+		Target:    "primary",
+		Bucket:    "private-bucket",
+		Key:       "secret-object",
+		Source:    src,
+	})
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	text := err.Error()
+	if !strings.Contains(text, "upstream request failed") || !strings.Contains(text, "http://upstream.local") {
+		t.Fatalf("error = %q, want sanitized upstream host", text)
+	}
+	for _, forbidden := range []string{"sentinel-query-value", "user:pass", "private-bucket", "secret-object", "token="} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("error = %q, must not contain %q", text, forbidden)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestClientDo_TargetTimeoutSurvivesUntilResponseBodyEOF(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,23 +274,13 @@ func TestClientDo_TargetTimeoutSurvivesUntilResponseBodyEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL, func(target *config.S3Target) { target.Timeout = 200 * time.Millisecond }), testBudget())
 	resp, err := client.Do(context.Background(), Request{
 		Operation: s3ops.OpGetObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Timeout:        200 * time.Millisecond,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
@@ -259,23 +315,13 @@ func TestClientDo_TargetTimeoutCancelsSlowResponseBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL, func(target *config.S3Target) { target.Timeout = 20 * time.Millisecond }), testBudget())
 	resp, err := client.Do(context.Background(), Request{
 		Operation: s3ops.OpGetObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Timeout:        20 * time.Millisecond,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
@@ -315,22 +361,13 @@ func TestClientDo_StreamsKnownLengthSourceBody(t *testing.T) {
 	src.Body = io.NopCloser(strings.NewReader("payload"))
 	src.ContentLength = int64(len("payload"))
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), testBudget())
 	request := Request{
 		Operation: s3ops.OpPutObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	}
 
 	resp, err := client.Do(context.Background(), request)
@@ -377,22 +414,13 @@ func TestClientDo_ReusesReplayableSourceBody(t *testing.T) {
 	}
 	src.ContentLength = int64(len("payload"))
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), testBudget())
 	request := Request{
 		Operation: s3ops.OpPutObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	}
 
 	resp, err := client.Do(context.Background(), request)
@@ -448,22 +476,13 @@ func TestClientDo_UsesGetBodyOncePerRequest(t *testing.T) {
 	getBodyCalls = 0
 	src.ContentLength = int64(len("payload"))
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), testBudget())
 	resp, err := client.Do(context.Background(), Request{
 		Operation: s3ops.OpPutObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
@@ -493,22 +512,13 @@ func TestClientDo_BuffersUnknownLengthSourceBodyWithinLimit(t *testing.T) {
 	src.Body = io.NopCloser(strings.NewReader("payload"))
 	src.ContentLength = -1
 
-	client := NewClientWithReplayLimit(&http.Client{}, 16)
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), replaybody.NewBudget(16, replaybody.DefaultAggregateMaxBytes))
 	request := Request{
 		Operation: s3ops.OpPutObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	}
 
 	resp, err := client.Do(context.Background(), request)
@@ -550,28 +560,62 @@ func TestClientDo_RejectsOversizedUnknownLengthSourceBody(t *testing.T) {
 	src.Body = &generatedReadCloser{remaining: replaybody.DefaultMaxBytes + 1}
 	src.ContentLength = -1
 
-	client := NewClientWithReplayLimit(&http.Client{}, 3)
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), replaybody.NewBudget(3, replaybody.DefaultAggregateMaxBytes))
 	_, err = client.Do(context.Background(), Request{
 		Operation: s3ops.OpPutObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if !replaybody.IsTooLarge(err) {
 		t.Fatalf("expected oversized replay error, got %v", err)
 	}
 	if calls != 0 {
 		t.Fatalf("unexpected upstream call count = %d, want 0", calls)
+	}
+}
+
+func TestClientDo_ObservesReplayBudgetConsumedByEarlierStage(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	budget := replaybody.NewBudget(10, 3)
+	earlier, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier.Body = io.NopCloser(strings.NewReader("abc"))
+	earlier.ContentLength = -1
+	if err := budget.Ensure(earlier); err != nil {
+		t.Fatal(err)
+	}
+	defer replaybody.Release(earlier)
+
+	src, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Body = io.NopCloser(strings.NewReader("x"))
+	src.ContentLength = -1
+
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), budget)
+	_, err = client.Do(context.Background(), Request{
+		Operation: s3ops.OpPutObject,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
+	})
+	if !replaybody.IsBudgetExhausted(err) {
+		t.Fatalf("err = %v, want budget exhausted", err)
+	}
+	if calls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", calls)
 	}
 }
 
@@ -595,22 +639,13 @@ func TestClientDo_DoesNotForwardHopByHopHeaders(t *testing.T) {
 	src.Header.Set("X-Remove-Me", "secret")
 	src.Header.Set("TE", "trailers")
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), testBudget())
 	resp, err := client.Do(context.Background(), Request{
 		Operation: s3ops.OpGetObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
@@ -645,22 +680,13 @@ func TestClientDo_ForwardsAuthenticatedControlHeadersOnly(t *testing.T) {
 	src.Header.Set("X-Amz-Acl", "private")
 	src.Header.Set("X-Amz-Date", "20240101T000000Z")
 
-	client := NewClient(&http.Client{})
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), testBudget())
 	resp, err := client.Do(context.Background(), Request{
 		Operation: s3ops.OpPutObject,
-		Target: config.S3Target{
-			Endpoint:       server.URL,
-			EndpointURL:    mustURL(t, server.URL),
-			Region:         "us-east-1",
-			ForcePathStyle: true,
-			Credentials: config.StaticCredential{
-				AccessKey: "ak",
-				SecretKey: "sk",
-			},
-		},
-		Bucket: "bucket",
-		Key:    "key",
-		Source: src,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
 	})
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
@@ -672,5 +698,37 @@ func TestClientDo_ForwardsAuthenticatedControlHeadersOnly(t *testing.T) {
 	}
 	if gotDate == "20240101T000000Z" {
 		t.Fatalf("inbound X-Amz-Date was forwarded")
+	}
+}
+
+func TestClientDo_ForwardsAcceptEncodingHeader(t *testing.T) {
+	var gotAcceptEncoding string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/bucket/key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Header.Set("Accept-Encoding", "br")
+
+	client := newTestClient(t, &http.Client{}, testTargets(t, server.URL), testBudget())
+	resp, err := client.Do(context.Background(), Request{
+		Operation: s3ops.OpGetObject,
+		Target:    "primary",
+		Bucket:    "bucket",
+		Key:       "key",
+		Source:    src,
+	})
+	if err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	resp.Body.Close()
+
+	if gotAcceptEncoding != "br" {
+		t.Fatalf("Accept-Encoding = %q, want br", gotAcceptEncoding)
 	}
 }

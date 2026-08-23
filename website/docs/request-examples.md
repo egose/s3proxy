@@ -103,6 +103,8 @@ Authorization: AWS4-HMAC-SHA256 ...
 
 Multipart upload operations are not implemented in v1. `CopyObject` is also rejected.
 
+S3 subresource query operations are rejected before route dispatch unless they are part of the documented supported query surface. Examples include `?acl`, `?tagging`, `?retention`, `?legal-hold`, `?versionId=...`, `?restore`, `?select`, response header overrides, and multipart query variants such as `?uploads` and `?uploadId=...`.
+
 The proxy returns an S3-compatible `NotImplemented` error for those requests instead of attempting partial support.
 
 ## Behavior Notes
