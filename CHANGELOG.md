@@ -1,3 +1,9 @@
+## [0.3.2](https://github.com/egose/s3proxy/compare/v0.3.1...v0.3.2) (2026-08-23)
+
+### Bug Fixes
+
+* archive build outputs with tar -C and update CI step ([5eb2eeb](https://github.com/egose/s3proxy/commit/5eb2eeb1c25fd4b85a3c0734bb776a460b25316f))
+
 ## [0.3.1](https://github.com/egose/s3proxy/compare/v0.3.0...v0.3.1) (2026-08-23)
 
 ## [0.3.0](https://github.com/egose/s3proxy/compare/v0.2.0...v0.3.0) (2026-08-23)
