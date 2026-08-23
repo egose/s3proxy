@@ -51,7 +51,7 @@ aws --endpoint-url "$S3_ENDPOINT" s3api get-object \
   ./cat.out.jpg
 ```
 
-For a route with `read_preference = "ordered_failover"`, the proxy will try later destinations only on transport errors, timeouts, or upstream `5xx`.
+For a route with `read_preference = "ordered_failover"`, the proxy tries later destinations on errors returned while preparing, signing, or sending the upstream request, including transport errors, timeouts, replay-limit errors, and upstream `5xx`. It does not fail over on an upstream `4xx` response.
 
 ## Head An Object
 

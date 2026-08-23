@@ -54,6 +54,8 @@ Supported inbound auth modes:
 
 With `sigv4_static`, the proxy verifies the inbound S3 SigV4 signature against statically configured clients.
 
+Header-signed requests must sign `x-amz-date` and be within 15 minutes of the proxy clock. Presigned URLs may expire at most seven days after signing. Payload hashes may be omitted, use `UNSIGNED-PAYLOAD`, or contain a 64-character hexadecimal SHA-256 digest. Streaming SigV4 payload sentinels are not supported in v1.
+
 ## Request Classification
 
 Routing uses S3 operation classification, not only the HTTP method.
@@ -62,7 +64,7 @@ Examples:
 
 - `GET /bucket/key` can classify as `GetObject`
 - `HEAD /bucket` can classify as `HeadBucket`
-- `GET /?list-type=2` can classify as `ListObjectsV2`
+- `GET /bucket?list-type=2` can classify as `ListObjectsV2`
 
 That classification is what route `operations = [...]` filters use.
 
@@ -81,7 +83,7 @@ Important behavior:
 
 `ListBuckets` is virtual.
 
-The proxy returns buckets defined in `bucket` blocks and filtered by the authenticated client's `visible_buckets` policy. It does not call the backend to discover buckets.
+The proxy returns buckets defined in `bucket` blocks and filtered by the authenticated client's `visible_buckets` policy. It does not call the backend to discover buckets or resolve a route. Adding `ListBuckets` to a route's operations therefore has no routing effect.
 
 ## `ListObjectsV2`
 
@@ -91,10 +93,9 @@ The proxy does not merge listing results or pagination tokens across multiple ba
 
 ## Failover Rules
 
-For `read_preference = "ordered_failover"`, failover happens only on:
+For `read_preference = "ordered_failover"`, the proxy tries the next destination on:
 
-- transport errors
-- request timeouts
+- errors returned while preparing, signing, or sending the upstream request, including transport errors, request timeouts, and replay-limit errors
 - upstream `5xx`
 
 Failover does not happen on:
@@ -102,6 +103,7 @@ Failover does not happen on:
 - `404`
 - `NoSuchKey`
 - `NoSuchBucket`
+- any other upstream `4xx`
 
 ## Fan-Out Writes
 
@@ -115,6 +117,7 @@ For `dispatch = "all"`:
 - transport or replay failures return a proxy-generated failure
 - fan-out is not transactional; a destination that succeeds before another destination fails is not rolled back
 - oversized replay attempts fail with `413 EntityTooLarge`; aggregate replay-budget exhaustion fails with `503 SlowDown`
+- at most four destination attempts run concurrently; additional destinations wait for a slot
 
 For writes matched by multiple routes through `on_match = "continue"`, every matched route must also succeed. A later route failure is returned as failure rather than hiding behind an earlier success.
 
@@ -138,4 +141,4 @@ Representative error rules:
 
 ## Health Endpoints
 
-`GET /healthz` and `GET /readyz` are local process endpoints. `/readyz` means the proxy process is serving requests; it does not poll configured backends or report destination health.
+`/healthz` and `/readyz` are unauthenticated, method-agnostic process endpoints on the main S3 listener. Restrict them at the network or reverse-proxy layer if the listener is public. `/readyz` means the proxy process is serving requests; it does not poll configured backends or report destination health.

@@ -12,22 +12,12 @@ You need:
 
 - an S3-compatible backend such as MinIO
 - backend credentials with access to a bucket you want to expose
-- either an installed `s3proxy` binary or a local checkout of this repo
+- a local checkout of this repo
+- Go 1.26 or newer and `make`
 
 ## Install
 
-Install with `asdf`:
-
-```sh
-asdf plugin add s3proxy
-# or
-asdf plugin add s3proxy https://github.com/egose/s3proxy.git
-
-asdf install s3proxy latest
-asdf global s3proxy latest
-```
-
-Or build from source:
+Build from source:
 
 ```sh
 make build
