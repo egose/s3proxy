@@ -1,3 +1,18 @@
+## [0.3.0](https://github.com/egose/s3proxy/compare/v0.2.0...v0.3.0) (2026-08-23)
+
+### Features
+
+* **website:** enforce v1 query contracts and harden S3 proxy lifecycle ([6d5098f](https://github.com/egose/s3proxy/commit/6d5098f037892db816050e87b5051002d0876f21))
+
+### Bug Fixes
+
+* **website:** handle presigned auth before rejecting unsupported operations ([634bcfb](https://github.com/egose/s3proxy/commit/634bcfbc6b0956f873d52ea6bbaf6c4d7fcc1b1d))
+
+### Documentation
+
+* **website:** refresh website layout spacing and theme component formatting ([296da76](https://github.com/egose/s3proxy/commit/296da76e65de04268c1337194b0d1a1713278023))
+* **website:** update website docs for v1 routing, auth, and runtime behavior ([7b530b4](https://github.com/egose/s3proxy/commit/7b530b4fd0020ec28170dc376bb9361c41dd3497))
+
 ## [0.2.0](https://github.com/egose/s3proxy/compare/v0.1.0...v0.2.0) (2026-08-10)
 
 ### Features
