@@ -1,3 +1,13 @@
+## [0.5.0](https://github.com/egose/s3proxy/compare/v0.4.1...v0.5.0) (2026-08-24)
+
+### Features
+
+* **website:** split release workflow and add verified docker publish job ([5ef3324](https://github.com/egose/s3proxy/commit/5ef3324b51a523ca8e97dd2c5d525c0f3e590989))
+
+### Documentation
+
+* **website:** update deployment docs for verified image publishing ([41e19b8](https://github.com/egose/s3proxy/commit/41e19b809dee96cfa97b5deb0384d3f839cbc2a7))
+
 ## [0.4.1](https://github.com/egose/s3proxy/compare/v0.4.0...v0.4.1) (2026-08-24)
 
 ## [0.4.0](https://github.com/egose/s3proxy/compare/v0.3.2...v0.4.0) (2026-08-24)
