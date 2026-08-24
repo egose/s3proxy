@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
-.PHONY: help build build-all build-single build-archive check-toolchain test-asdf format fmt vet test test-race cover clean \
+.PHONY: help build build-all check-toolchain test-asdf format fmt vet test test-race cover clean \
         docker-build docker-run run sandbox-up sandbox-down sandbox-destroy \
         sandbox-reset sandbox-logs sandbox-logs-follow sandbox-ps validate \
         test-integration test-integration-race sandbox-integration-up \
@@ -15,24 +15,6 @@ LD_FLAGS    := -s -w -X main.version=$(VERSION)
 DIST_DIR    := dist
 PREFIX      := s3proxy
 GO_BUILD_FLAGS := -trimpath -buildvcs=false
-TAR_FLAGS   := --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner
-
-# --- Cross-compile matrix -------------------------------------------------
-
-OS_ARCH_PAIRS := \
-    linux:amd64 \
-    linux:arm64 \
-    linux:386 \
-    linux:arm \
-    windows:amd64 \
-    windows:386 \
-    darwin:amd64 \
-    darwin:arm64 \
-    freebsd:amd64 \
-    freebsd:arm64 \
-    openbsd:amd64 \
-    openbsd:arm64 \
-    netbsd:amd64
 
 # --- Docker / Compose -----------------------------------------------------
 
@@ -60,44 +42,8 @@ build: ## Build the s3proxy binary into dist/
 	CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -ldflags "$(LD_FLAGS)" -o "$(DIST_DIR)/$(BINARY)" $(MAIN_PKG)
 	@echo "built $(DIST_DIR)/$(BINARY) (version $(VERSION))"
 
-build-single: ## Build for a single OS:ARCH pair (OS_ARCH=linux:amd64)
-	@set -euo pipefail; \
-	OS_ARCH='$(OS_ARCH)'; \
-	case "$$OS_ARCH" in *:*:*) echo "invalid OS_ARCH: $$OS_ARCH" >&2; exit 2;; *:*) ;; *) echo "OS_ARCH must be os:arch" >&2; exit 2;; esac; \
-	OS="$${OS_ARCH%%:*}"; \
-	ARCH="$${OS_ARCH#*:}"; \
-	case " $(OS_ARCH_PAIRS) " in *" $$OS_ARCH "*) ;; *) echo "unsupported OS_ARCH: $$OS_ARCH" >&2; exit 2;; esac; \
-	echo "Building for OS=$$OS and ARCH=$$ARCH"; \
-	DIR="$(DIST_DIR)/$$OS-$$ARCH"; \
-	mkdir -p "$$DIR"; \
-	EXT=""; [ "$$OS" != "windows" ] || EXT=.exe; \
-	tmp="$$(mktemp "$$DIR/.$(BINARY).XXXXXX")"; trap 'rm -f "$$tmp"' EXIT; \
-	CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH \
-	  go build $(GO_BUILD_FLAGS) -ldflags "$(LD_FLAGS)" \
-	  -o "$$tmp" $(MAIN_PKG); \
-	chmod +x "$$tmp"; mv -f "$$tmp" "$$DIR/$(BINARY)$$EXT"; trap - EXIT
-
-build-all: ## Cross-compile for all OS/arch pairs in OS_ARCH_PAIRS
-	@set -euo pipefail; \
-	stage="$$(mktemp -d "$(CURDIR)/.dist.XXXXXX")"; trap 'rm -rf "$$stage"' EXIT; \
-	for pair in $(OS_ARCH_PAIRS); do $(MAKE) --no-print-directory build-single OS_ARCH="$$pair" DIST_DIR="$$stage"; done; \
-	rm -rf "$(DIST_DIR)"; mv "$$stage" "$(DIST_DIR)"; trap - EXIT
-
-build-archive: ## Tar each cross-compiled dist/<os>-<arch>/ dir into a release archive
-	@set -euo pipefail; \
-	rm -f "$(DIST_DIR)"/*.tar.gz "$(DIST_DIR)/SHA256SUMS"; \
-	for pair in $(OS_ARCH_PAIRS); do \
-	  name="$${pair/:/-}"; d="$(DIST_DIR)/$$name"; \
-	  ext=""; [ "$${pair%%:*}" != windows ] || ext=.exe; \
-	  test -f "$$d/$(BINARY)$$ext" || { echo "missing $$d/$(BINARY)$$ext" >&2; exit 1; }; \
-	  test "$$(find "$$d" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 || { echo "unexpected files in $$d" >&2; exit 1; }; \
-	  archive="$(DIST_DIR)/$(PREFIX)-$$name.tar.gz"; \
-	  tmp="$$archive.tmp"; tar $(TAR_FLAGS) -C "$$d" -cf - "$(BINARY)$$ext" | gzip -n >"$$tmp"; \
-	  tar -tzf "$$tmp" | diff -u <(printf '%s\n' "$(BINARY)$$ext") - >/dev/null; \
-	  mv "$$tmp" "$$archive"; \
-	  echo "archived $$archive"; \
-	done; \
-	(cd "$(DIST_DIR)" && sha256sum $(PREFIX)-*.tar.gz >SHA256SUMS)
+build-all: ## Build and archive every release target
+	pnpm release:build -- --version "$(VERSION)"
 
 # --- Quality --------------------------------------------------------------
 

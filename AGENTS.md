@@ -4,14 +4,16 @@ Operational guide for AI agents (and humans) working in this repo.
 
 ## Build & run
 
-| Command                                     | Effect                                                    |
-| ------------------------------------------- | --------------------------------------------------------- |
-| `make build`                                | Build `dist/s3proxy` for the host platform (CGO disabled) |
-| `make build-all`                            | Cross-compile for every `OS_ARCH_PAIRS`                   |
-| `make run CONFIG=path/to/config.hcl`        | `go run` the server against a config                      |
-| `make validate CONFIG=path/to/config.hcl`   | Load + validate config without serving                    |
-| `make docker-build`                         | Multi-stage container build as `s3proxy:$(VERSION)`       |
-| `make docker-run CONFIG=path/to/config.hcl` | Run the container image with a mounted config             |
+| Command                                      | Effect                                                    |
+| -------------------------------------------- | --------------------------------------------------------- |
+| `make build`                                 | Build `dist/s3proxy` for the host platform (CGO disabled) |
+| `pnpm release:build -- --version <version>`  | Build archives and `SHA256SUMS` for all release targets   |
+| `pnpm release:verify -- --version <version>` | Verify release archives (`--reproducibility` rebuilds)    |
+| `make build-all VERSION=<version>`           | Compatibility wrapper for `pnpm release:build`            |
+| `make run CONFIG=path/to/config.hcl`         | `go run` the server against a config                      |
+| `make validate CONFIG=path/to/config.hcl`    | Load + validate config without serving                    |
+| `make docker-build`                          | Multi-stage container build as `s3proxy:$(VERSION)`       |
+| `make docker-run CONFIG=path/to/config.hcl`  | Run the container image with a mounted config             |
 
 The HCL config uses `env("VAR")` for secret/placeholder substitution; values
 are textually inlined **before** HCL parsing. Run `set -a; . ./.env; set +a`
@@ -31,6 +33,10 @@ before invoking the binary locally so env vars resolve.
 `make vet test` is the default pre-commit sanity check; run it after any
 non-trivial change. There is no separate typecheck target — Go's compiler
 is the typecheck, and `make build` exercises it.
+
+Release builds are configured in `go-release.json`. Keep `dist/SHA256SUMS`
+archive-only until `pnpm release:verify` completes; the release workflow adds
+the SBOM checksum afterward for publication.
 
 ## Integration tests
 

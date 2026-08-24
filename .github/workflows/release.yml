@@ -38,12 +38,15 @@ jobs:
     - name: Setup Tools
       uses: ./.github/actions/setup-tools
 
-    - name: Build release archives
+    - name: Install root npm dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Build and verify release archives
       env:
         VERSION: ${{ github.ref_name }}
       run: |
-        make build-all VERSION="$VERSION"
-        make build-archive
+        pnpm release:build -- --version "$VERSION"
+        pnpm release:verify -- --version "$VERSION" --reproducibility
 
     - name: Generate binary SBOM
       uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84

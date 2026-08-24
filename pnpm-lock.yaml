@@ -21,8 +21,11 @@ importers:
         specifier: ^7.0.6
         version: 7.0.6(release-it@20.2.1(@types/node@25.9.5))
       '@repo-toolkit/changelog':
-        specifier: ^0.7.2
-        version: 0.7.2(conventional-commits-filter@5.0.0)
+        specifier: ^0.14.0
+        version: 0.14.0(conventional-commits-filter@5.0.0)
+      '@repo-toolkit/go-release':
+        specifier: ^0.14.0
+        version: 0.14.0
       '@types/node':
         specifier: ^25.9.5
         version: 25.9.5
@@ -48,6 +51,14 @@ packages:
   '@babel/helper-validator-identifier@7.29.7':
     resolution: {integrity: sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==}
     engines: {node: '>=6.9.0'}
+
+  '@clack/core@1.4.3':
+    resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
+    engines: {node: '>= 20.12.0'}
+
+  '@clack/prompts@1.7.0':
+    resolution: {integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==}
+    engines: {node: '>= 20.12.0'}
 
   '@commitlint/cli@20.5.3':
     resolution: {integrity: sha512-OJdL0EXWD5y9LPa0nr/geOwzaS8BsdaybKkcloB0JgsguGxNv2R+hC2FTPqrAcprg35zF33KOQerY0x8W1aesA==}
@@ -345,13 +356,18 @@ packages:
     peerDependencies:
       release-it: ^18.0.0 || ^19.0.0 || ^20.0.0
 
-  '@repo-toolkit/changelog@0.7.2':
-    resolution: {integrity: sha512-u91IxH5NQd5avn470shFY6d40oDA4DmKirTFpOQ8VanWzvAmUM4/bsPVrU5hkvoMpD4eVaDnRpvJbfQfJPdXHg==}
+  '@repo-toolkit/changelog@0.14.0':
+    resolution: {integrity: sha512-QHW0zYomxSC7nM4fapipmkT9aluVRuN34KUVvExsuVeL+Q+KiUOb6swEAWNJ65JfYYQpeytZ3gq6twDwBMd+yw==}
     engines: {node: '>=20'}
     hasBin: true
 
-  '@repo-toolkit/publish-package@0.7.2':
-    resolution: {integrity: sha512-8CtEX6mZQK/wMUMRIER7S3m6CQ6dNwX55zcway/ZHoZzBOb7c7bgG7BIQVD67rj2bsJKT79xxei/b7aGHxOv6w==}
+  '@repo-toolkit/go-release@0.14.0':
+    resolution: {integrity: sha512-beNzBUGHkDDkiGV6/L+Fr1o4zDvhMEpnghSXeFL06LmJaizrWOUMmNHXeanIpE/5Hp2NPgtvVHmLC8TLcZWdXg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  '@repo-toolkit/publish-package@0.14.0':
+    resolution: {integrity: sha512-eaz6bI47KQVDgnlOEYl/iCzAxBYnnHqGLB7/NedevxSdM/LrReIIfJVBii2OSJ9iSKzLagLWuM3zF5NdUwqA7w==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -1148,6 +1164,9 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
+  sisteransi@1.0.5:
+    resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
   smart-buffer@4.2.0:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
@@ -1306,6 +1325,18 @@ snapshots:
       picocolors: 1.1.1
 
   '@babel/helper-validator-identifier@7.29.7': {}
+
+  '@clack/core@1.4.3':
+    dependencies:
+      fast-wrap-ansi: 0.2.2
+      sisteransi: 1.0.5
+
+  '@clack/prompts@1.7.0':
+    dependencies:
+      '@clack/core': 1.4.3
+      fast-string-width: 3.0.2
+      fast-wrap-ansi: 0.2.2
+      sisteransi: 1.0.5
 
   '@commitlint/cli@20.5.3(@types/node@25.9.5)(conventional-commits-filter@5.0.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3)':
     dependencies:
@@ -1639,15 +1670,21 @@ snapshots:
       release-it: 20.2.1(@types/node@25.9.5)
       semver: 7.8.5
 
-  '@repo-toolkit/changelog@0.7.2(conventional-commits-filter@5.0.0)':
+  '@repo-toolkit/changelog@0.14.0(conventional-commits-filter@5.0.0)':
     dependencies:
-      '@repo-toolkit/publish-package': 0.7.2
+      '@repo-toolkit/publish-package': 0.14.0
       conventional-changelog: 7.2.1(conventional-commits-filter@5.0.0)
       conventional-changelog-conventionalcommits: 9.3.1
     transitivePeerDependencies:
       - conventional-commits-filter
 
-  '@repo-toolkit/publish-package@0.7.2': {}
+  '@repo-toolkit/go-release@0.14.0':
+    dependencies:
+      '@repo-toolkit/publish-package': 0.14.0
+
+  '@repo-toolkit/publish-package@0.14.0':
+    dependencies:
+      '@clack/prompts': 1.7.0
 
   '@simple-libs/child-process-utils@1.0.2':
     dependencies:
@@ -2423,6 +2460,8 @@ snapshots:
   semver@7.8.5: {}
 
   signal-exit@4.1.0: {}
+
+  sisteransi@1.0.5: {}
 
   smart-buffer@4.2.0: {}
 
