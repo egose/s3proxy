@@ -1,0 +1,121 @@
+name: Publish Docker image
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      tag_name:
+        required: true
+        type: string
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: egose/s3proxy
+
+jobs:
+  build-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      attestations: write
+      id-token: write
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: 0
+        fetch-tags: true
+        persist-credentials: false
+
+    - name: Validate release tag and source commit
+      run: bash scripts/validate-release-tag.sh "$RELEASE_TAG"
+      env:
+        RELEASE_TAG: ${{ inputs.tag_name }}
+
+    - name: Derive image version and revision
+      id: release
+      run: |
+        version=${RELEASE_TAG#v}
+        image_version=${version//+/_}
+        core=${version%%[-+]*}
+        major=${core%%.*}
+        remainder=${core#*.}
+        minor=${remainder%%.*}
+        stable=true
+        [[ "${version%%+*}" != *-* ]] || stable=false
+        {
+          printf 'version=%s\n' "$version"
+          printf 'image-version=%s\n' "$image_version"
+          printf 'major=%s\n' "$major"
+          printf 'minor=%s\n' "$minor"
+          printf 'stable=%s\n' "$stable"
+          printf 'revision=%s\n' "$(git rev-parse HEAD)"
+        } >> "$GITHUB_OUTPUT"
+      env:
+        RELEASE_TAG: ${{ inputs.tag_name }}
+
+    - name: Build, scan, and publish verified image
+      uses: egose/actions/docker-build-push@0802d5eb78229994c066ea07b8c576dd38adfb5b
+      env:
+        RELEASE_TAG: ${{ inputs.tag_name }}
+        REVISION: ${{ steps.release.outputs.revision }}
+        VERSION: ${{ steps.release.outputs.version }}
+      with:
+        registry-url: ${{ env.DOCKER_REGISTRY }}
+        registry-username: ${{ github.actor }}
+        registry-password: ${{ secrets.GITHUB_TOKEN }}
+        image-name: ${{ env.IMAGE_NAME }}
+        metadata-tags: |
+          type=raw,value=${{ steps.release.outputs.image-version }}
+          type=raw,value=${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }},enable=${{ steps.release.outputs.stable }}
+          type=raw,value=${{ steps.release.outputs.major }},enable=${{ steps.release.outputs.stable }}
+        metadata-labels: |
+          org.opencontainers.image.version=${{ steps.release.outputs.version }}
+          org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
+        docker-context: .
+        docker-file: Dockerfile
+        docker-args: |
+          VERSION=${{ steps.release.outputs.version }}
+          REVISION=${{ steps.release.outputs.revision }}
+        publish-mode: gated
+        pre-push-command: |
+          command -v jq >/dev/null 2>&1 || {
+            printf 'jq is required for fail-closed published digest verification\n' >&2
+            exit 1
+          }
+
+          binary_version="$(docker run --rm --entrypoint /usr/local/bin/s3proxy "$IMAGE_REF" version)"
+          version_label="$(docker image inspect "$IMAGE_REF" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')"
+          revision_label="$(docker image inspect "$IMAGE_REF" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+
+          if [ "$binary_version" != "$VERSION" ]; then
+            printf 's3proxy version mismatch: expected %s, got %s\n' "$VERSION" "$binary_version" >&2
+            exit 1
+          fi
+          if [ "$version_label" != "$VERSION" ]; then
+            printf 'OCI version label mismatch: expected %s, got %s\n' "$VERSION" "$version_label" >&2
+            exit 1
+          fi
+          if [ "$revision_label" != "$REVISION" ]; then
+            printf 'OCI revision label mismatch: expected %s, got %s\n' "$REVISION" "$revision_label" >&2
+            exit 1
+          fi
+
+          {
+            printf -- '- `s3proxy version`: `%s`\n' "$binary_version"
+            printf -- '- OCI version label: `%s`\n' "$version_label"
+            printf -- '- OCI revision label: `%s`\n' "$revision_label"
+          } >> "$GITHUB_STEP_SUMMARY"
+        trivy: 'true'
+        trivy-severity: HIGH,CRITICAL
+        trivy-ignore-unfixed: 'true'
+        sbom: 'true'
+        attest-provenance: 'true'
+        attest-sbom: 'true'
+        attest-create-storage-record: 'false'
