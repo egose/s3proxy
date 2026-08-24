@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-    - v*
+    - v*.*.*
 
 permissions:
   contents: read
@@ -16,36 +16,24 @@ jobs:
   quality:
     uses: ./.github/workflows/test.yml
 
-  publish:
+  verify:
     needs: quality
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      actions: read
-      contents: write
-      packages: write
+      contents: read
       id-token: write
       attestations: write
-    env:
-      IMAGE: ghcr.io/egose/s3proxy
-      TAG: ${{ github.ref_name }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 0
         persist-credentials: false
 
-    - name: Validate release identity
-      id: release
-      run: |
-        set -euo pipefail
-        identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
-        [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
-        version=${TAG#v}
-        test "$(tr -d '\r\n' <VERSION)" = "$version"
-        test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
-        test "$(git tag --points-at "$GITHUB_SHA" --list "$TAG")" = "$TAG"
-        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+    - name: Validate release tag and source commit
+      run: bash scripts/validate-release-tag.sh "$RELEASE_TAG"
+      env:
+        RELEASE_TAG: ${{ github.ref_name }}
 
     - name: Setup Tools
       uses: ./.github/actions/setup-tools
@@ -76,92 +64,29 @@ jobs:
           dist/SHA256SUMS
           dist/s3proxy.spdx.json
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
-
-    - name: Generate image metadata
-      id: meta
-      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302
+    - name: Upload verified release artifacts
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        images: ${{ env.IMAGE }}
-        tags: |
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
+        name: s3proxy-${{ github.ref_name }}
+        path: |
+          dist/*.tar.gz
+          dist/SHA256SUMS
+          dist/s3proxy.spdx.json
 
-    - name: Build local image for scan
-      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+  release:
+    needs:
+    - verify
+    - publish-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+    - name: Download verified release artifacts
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
-        context: .
-        load: true
-        push: false
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        build-args: |
-          VERSION=${{ steps.release.outputs.version }}
-          REVISION=${{ github.sha }}
-
-    - name: Verify local image identity
-      id: scanned
-      env:
-        VERSION: ${{ steps.release.outputs.version }}
-      run: |
-        set -euo pipefail
-        image_ref="$IMAGE:$VERSION"
-        digest=$(docker image inspect "$image_ref" --format '{{.Id}}')
-        test "$(docker image inspect "$image_ref" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$VERSION"
-        test "$(docker image inspect "$image_ref" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
-        test "$(docker run --rm --entrypoint /usr/local/bin/s3proxy "$image_ref" version)" = "$VERSION"
-        printf 'digest=%s\nimage-ref=%s\n' "$digest" "$image_ref" >> "$GITHUB_OUTPUT"
-
-    - name: Log in to GHCR
-      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Push scanned image tags
-      run: |
-        set -euo pipefail
-        while IFS= read -r tag; do
-          test -n "$tag" || continue
-          docker image push "$tag"
-        done <<'TAGS'
-        ${{ steps.meta.outputs.tags }}
-        TAGS
-
-    - name: Verify published image identity
-      id: published
-      env:
-        CONFIG_DIGEST: ${{ steps.scanned.outputs.digest }}
-        IMAGE_REF: ${{ steps.scanned.outputs.image-ref }}
-      run: |
-        set -euo pipefail
-        manifest_digest=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{.Manifest.Digest}}')
-        while IFS= read -r tag; do
-          test -n "$tag" || continue
-          published_config=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Config.Digest}}')
-          test "$published_config" = "$CONFIG_DIGEST"
-        done <<'TAGS'
-        ${{ steps.meta.outputs.tags }}
-        TAGS
-        printf 'manifest-digest=%s\n' "$manifest_digest" >> "$GITHUB_OUTPUT"
-
-    - name: Attest image provenance
-      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
-      with:
-        subject-name: ${{ env.IMAGE }}
-        subject-digest: ${{ steps.published.outputs.manifest-digest }}
-        push-to-registry: true
-
-    - name: Attest image SBOM
-      uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
-      with:
-        subject-name: ${{ env.IMAGE }}
-        subject-digest: ${{ steps.published.outputs.manifest-digest }}
-        sbom-path: image-sbom.spdx.json
-        push-to-registry: true
+        name: s3proxy-${{ github.ref_name }}
+        path: dist
 
     - name: Publish GitHub release
       uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7
@@ -171,3 +96,16 @@ jobs:
           dist/*.tar.gz
           dist/SHA256SUMS
           dist/s3proxy.spdx.json
+
+  publish-image:
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/publish.yaml
+    with:
+      ref: ${{ github.sha }}
+      tag_name: ${{ github.ref_name }}
