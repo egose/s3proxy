@@ -180,10 +180,10 @@ func (a *App) Run(ctx context.Context) error {
 	defer cancelRequests()
 	previousBaseContext := a.server.BaseContext
 	a.server.BaseContext = func(ln net.Listener) context.Context {
-		base := requestsCtx
-		if previousBaseContext != nil {
-			base = previousBaseContext(ln)
+		if previousBaseContext == nil {
+			return requestsCtx
 		}
+		base := previousBaseContext(ln)
 		ctx, cancel := context.WithCancel(base)
 		go func() {
 			<-requestsCtx.Done()
