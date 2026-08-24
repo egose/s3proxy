@@ -102,6 +102,9 @@ func TestBuildConfiguresUpstreamIdlePool(t *testing.T) {
 	if got, want := a.transport.MaxIdleConnsPerHost, defaultUpstreamMaxIdleConnsPerHost; got != want {
 		t.Fatalf("MaxIdleConnsPerHost = %d, want %d", got, want)
 	}
+	if got, want := a.transport.MaxConnsPerHost, defaultUpstreamMaxIdleConnsPerHost; got != want {
+		t.Fatalf("MaxConnsPerHost = %d, want %d", got, want)
+	}
 }
 
 func TestUpstreamTransportPreservesGzipEncodedObject(t *testing.T) {

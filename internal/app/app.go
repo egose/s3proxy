@@ -145,6 +145,7 @@ func newUpstreamTransport() *http.Transport {
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true,
 		MaxIdleConns:          100,
+		MaxConnsPerHost:       defaultUpstreamMaxIdleConnsPerHost,
 		MaxIdleConnsPerHost:   defaultUpstreamMaxIdleConnsPerHost,
 		IdleConnTimeout:       defaultUpstreamIdleConnTimeout,
 		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
