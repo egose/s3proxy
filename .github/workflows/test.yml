@@ -29,6 +29,9 @@ jobs:
     - name: Setup Tools (asdf)
       uses: ./.github/actions/setup-tools
 
+    - name: Install root npm dependencies
+      run: pnpm install --frozen-lockfile
+
     - name: go vet
       run: make check-toolchain vet
 
@@ -42,10 +45,10 @@ jobs:
     - name: go build (host)
       run: make build
 
-    - name: go build and archive (all targets)
+    - name: Build and verify release archives
       run: |
-        make build-all
-        make build-archive
+        pnpm release:build -- --version dev
+        pnpm release:verify -- --version dev --reproducibility
 
     - name: Test asdf plugin
       run: make test-asdf
