@@ -12,7 +12,8 @@ Common commands:
 
 ```sh
 make build
-make build-all
+pnpm release:build -- --version dev
+pnpm release:verify -- --version dev --reproducibility
 make run CONFIG=path/to/config.hcl
 make validate CONFIG=path/to/config.hcl
 ```
@@ -28,6 +29,17 @@ s3proxy version
 `serve` and `validate` also accept `-c` as shorthand for `--config`. These commands do not accept positional arguments.
 
 `make build` produces `dist/s3proxy` for the host platform with CGO disabled.
+
+`go-release.json` defines the release target matrix and archive contract.
+`pnpm release:build` creates deterministic `s3proxy-<os>-<arch>.tar.gz`
+archives and `SHA256SUMS`; `pnpm release:verify` checks those artifacts and
+their exact version output. Add `--reproducibility` to perform two independent
+rebuilds and compare archive hashes. `make build-all VERSION=<version>` remains
+a compatibility wrapper for the package build.
+
+Keep `SHA256SUMS` archive-only through package verification. The release
+workflow appends the generated SBOM checksum only after verification and then
+publishes the archives, checksum manifest, and SBOM together.
 
 ## Environment Variables
 
