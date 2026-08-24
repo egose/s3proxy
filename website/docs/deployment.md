@@ -78,7 +78,7 @@ services:
 
 The example uses the image produced by `make docker-build`; it does not assume a public `latest` image.
 
-Published GHCR images use semantic-version, major/minor, and major tags. The publishing workflow does not create a public `latest` tag.
+Published GHCR images use semantic-version, major/minor, and major tags. The publishing workflow does not create a public `latest` tag. Before publishing, it smoke-tests and scans the exact local image, then verifies the pushed image digest and attaches provenance and SBOM attestations.
 
 ## systemd
 
