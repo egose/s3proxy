@@ -1,3 +1,15 @@
+## [0.4.0](https://github.com/egose/s3proxy/compare/v0.3.2...v0.4.0) (2026-08-24)
+
+### Features
+
+* add docker compose plugin to setup tools action ([da53eaa](https://github.com/egose/s3proxy/commit/da53eaa6ffdd8271d554ad89e2c1f8c518071745))
+* harden release pipeline and asdf plugin ([8648183](https://github.com/egose/s3proxy/commit/8648183cee809f5752f13b274fc3e64cb2d6594f))
+
+### Bug Fixes
+
+* preserve request context when no base context is configured ([1166871](https://github.com/egose/s3proxy/commit/11668719c84d0184495194f2abf3d09e79710a35))
+* set the upstream transport connection limit ([bc10e47](https://github.com/egose/s3proxy/commit/bc10e479f271c581db0b3913c02888aba73d0137))
+
 ## [0.3.2](https://github.com/egose/s3proxy/compare/v0.3.1...v0.3.2) (2026-08-23)
 
 ### Bug Fixes
