@@ -1,12 +1,22 @@
 name: Check code/commit conventions
 
-on: push
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-commit-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pre-commit:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
 
     - name: Setup Tools
       uses: ./.github/actions/setup-tools
@@ -18,5 +28,5 @@ jobs:
       uses: egose/actions/precommit@799b388fb3497236093c6eb7e3eac0b4c8f956ce
       with:
         config: .pre-commit-config.yaml
-        commit-on-push: true
+        commit-on-push: false
         commit-on-pr: false

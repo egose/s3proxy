@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
-.PHONY: help build build-all build-single build-archive format fmt vet test test-race cover clean \
+.PHONY: help build build-all build-single build-archive check-toolchain test-asdf format fmt vet test test-race cover clean \
         docker-build docker-run run sandbox-up sandbox-down sandbox-destroy \
         sandbox-reset sandbox-logs sandbox-logs-follow sandbox-ps validate \
         test-integration test-integration-race sandbox-integration-up \
@@ -14,6 +14,8 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LD_FLAGS    := -s -w -X main.version=$(VERSION)
 DIST_DIR    := dist
 PREFIX      := s3proxy
+GO_BUILD_FLAGS := -trimpath -buildvcs=false
+TAR_FLAGS   := --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner
 
 # --- Cross-compile matrix -------------------------------------------------
 
@@ -34,7 +36,7 @@ OS_ARCH_PAIRS := \
 
 # --- Docker / Compose -----------------------------------------------------
 
-COMPOSE      := docker compose --env-file .env -f ./sandbox/docker-compose.yml
+COMPOSE      := docker-compose --env-file .env -f ./sandbox/docker-compose.yml
 UP_FLAGS     := up --build --remove-orphans
 DOWN_FLAGS   := down
 DESTROY_FLAGS := down --volumes --rmi all --remove-orphans
@@ -55,34 +57,47 @@ help: ## Show this help
 
 build: ## Build the s3proxy binary into dist/
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 go build -ldflags "$(LD_FLAGS)" -o $(DIST_DIR)/$(BINARY) $(MAIN_PKG)
+	CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -ldflags "$(LD_FLAGS)" -o "$(DIST_DIR)/$(BINARY)" $(MAIN_PKG)
 	@echo "built $(DIST_DIR)/$(BINARY) (version $(VERSION))"
 
 build-single: ## Build for a single OS:ARCH pair (OS_ARCH=linux:amd64)
-	@set -e; \
-	OS_ARCH=$(OS_ARCH); \
-	OS=$$(echo $$OS_ARCH | cut -d: -f1); \
-	ARCH=$$(echo $$OS_ARCH | cut -d: -f2); \
+	@set -euo pipefail; \
+	OS_ARCH='$(OS_ARCH)'; \
+	case "$$OS_ARCH" in *:*:*) echo "invalid OS_ARCH: $$OS_ARCH" >&2; exit 2;; *:*) ;; *) echo "OS_ARCH must be os:arch" >&2; exit 2;; esac; \
+	OS="$${OS_ARCH%%:*}"; \
+	ARCH="$${OS_ARCH#*:}"; \
+	case " $(OS_ARCH_PAIRS) " in *" $$OS_ARCH "*) ;; *) echo "unsupported OS_ARCH: $$OS_ARCH" >&2; exit 2;; esac; \
 	echo "Building for OS=$$OS and ARCH=$$ARCH"; \
 	DIR="$(DIST_DIR)/$$OS-$$ARCH"; \
-	mkdir -p $$DIR; \
-	EXT=$$(if [ "$$OS" = "windows" ]; then echo ".exe"; else echo ""; fi); \
+	mkdir -p "$$DIR"; \
+	EXT=""; [ "$$OS" != "windows" ] || EXT=.exe; \
+	tmp="$$(mktemp "$$DIR/.$(BINARY).XXXXXX")"; trap 'rm -f "$$tmp"' EXIT; \
 	CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH \
-	  go build -ldflags "$(LD_FLAGS) -X main.version=$(VERSION)/$$OS-$$ARCH" \
-	  -o $$DIR/$(BINARY)$$EXT $(MAIN_PKG)
+	  go build $(GO_BUILD_FLAGS) -ldflags "$(LD_FLAGS)" \
+	  -o "$$tmp" $(MAIN_PKG); \
+	chmod +x "$$tmp"; mv -f "$$tmp" "$$DIR/$(BINARY)$$EXT"; trap - EXIT
 
 build-all: ## Cross-compile for all OS/arch pairs in OS_ARCH_PAIRS
-	@$(foreach pair,$(OS_ARCH_PAIRS),$(MAKE) build-single OS_ARCH=$(pair);)
+	@set -euo pipefail; \
+	stage="$$(mktemp -d "$(CURDIR)/.dist.XXXXXX")"; trap 'rm -rf "$$stage"' EXIT; \
+	for pair in $(OS_ARCH_PAIRS); do $(MAKE) --no-print-directory build-single OS_ARCH="$$pair" DIST_DIR="$$stage"; done; \
+	rm -rf "$(DIST_DIR)"; mv "$$stage" "$(DIST_DIR)"; trap - EXIT
 
 build-archive: ## Tar each cross-compiled dist/<os>-<arch>/ dir into a release archive
-	@set -e; \
-	for d in $(DIST_DIR)/*-*/; do \
-	  [ -d "$$d" ] || continue; \
-	  name=$$(basename "$$d"); \
+	@set -euo pipefail; \
+	rm -f "$(DIST_DIR)"/*.tar.gz "$(DIST_DIR)/SHA256SUMS"; \
+	for pair in $(OS_ARCH_PAIRS); do \
+	  name="$${pair/:/-}"; d="$(DIST_DIR)/$$name"; \
+	  ext=""; [ "$${pair%%:*}" != windows ] || ext=.exe; \
+	  test -f "$$d/$(BINARY)$$ext" || { echo "missing $$d/$(BINARY)$$ext" >&2; exit 1; }; \
+	  test "$$(find "$$d" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 || { echo "unexpected files in $$d" >&2; exit 1; }; \
 	  archive="$(DIST_DIR)/$(PREFIX)-$$name.tar.gz"; \
-	  tar -C "$$d" -czf "$$archive" .; \
+	  tmp="$$archive.tmp"; tar $(TAR_FLAGS) -C "$$d" -cf - "$(BINARY)$$ext" | gzip -n >"$$tmp"; \
+	  tar -tzf "$$tmp" | diff -u <(printf '%s\n' "$(BINARY)$$ext") - >/dev/null; \
+	  mv "$$tmp" "$$archive"; \
 	  echo "archived $$archive"; \
-	done
+	done; \
+	(cd "$(DIST_DIR)" && sha256sum $(PREFIX)-*.tar.gz >SHA256SUMS)
 
 # --- Quality --------------------------------------------------------------
 
@@ -99,6 +114,7 @@ test-race: ## Run tests with the race detector
 	@go test -race ./...
 
 cover: ## Run tests with coverage report
+	@mkdir -p $(DIST_DIR)
 	@go test -coverprofile=$(DIST_DIR)/coverage.out ./...
 	@go tool cover -func=$(DIST_DIR)/coverage.out | tail -1
 	@echo "coverage profile: $(DIST_DIR)/coverage.out"
@@ -111,26 +127,46 @@ clean: ## Remove dist/ and coverage artifacts
 
 run: ## Run the server locally (CONFIG=path/to/config.hcl)
 	@if [ -z "$(CONFIG)" ]; then echo "usage: make run CONFIG=path/to/config.hcl"; exit 1; fi
-	@go run $(MAIN_PKG) serve --config $(CONFIG)
+	@config="$$(realpath -- "$(CONFIG)")" && go run $(MAIN_PKG) serve --config "$$config"
 
 validate: ## Validate config without starting the server (CONFIG=path/to/config.hcl)
 	@if [ -z "$(CONFIG)" ]; then echo "usage: make validate CONFIG=path/to/config.hcl"; exit 1; fi
-	@go run $(MAIN_PKG) validate --config $(CONFIG)
+	@config="$$(realpath -- "$(CONFIG)")" && go run $(MAIN_PKG) validate --config "$$config"
+
+check-toolchain: ## Verify tool declarations and build inputs remain aligned
+	@set -euo pipefail; \
+	go_mod="$$(awk '$$1 == "go" { print $$2; exit }' go.mod)"; \
+	go_tool="$$(awk '$$1 == "golang" { print $$2; exit }' .tool-versions)"; \
+	pnpm_tool="$$(awk '$$1 == "pnpm" { print $$2; exit }' .tool-versions)"; \
+	pnpm_pkg="$$(node -p "require('./package.json').packageManager.split('@')[1]")"; \
+	docker_go="$$(awk -F'[:@]' '/^FROM golang:/ { print $$2; exit }' Dockerfile)"; \
+	test "$${go_tool%.*}" = "$$go_mod" || { echo "Go drift: go.mod=$$go_mod .tool-versions=$$go_tool" >&2; exit 1; }; \
+	test "$$go_tool" = "$$docker_go" || { echo "Go drift: .tool-versions=$$go_tool Dockerfile=$$docker_go" >&2; exit 1; }; \
+	test "$$pnpm_tool" = "$$pnpm_pkg" || { echo "pnpm drift: .tool-versions=$$pnpm_tool package.json=$$pnpm_pkg" >&2; exit 1; }; \
+	for tool in actionlint shellcheck; do grep -Eq "^$$tool [^ ]+$$" .tool-versions || { echo "missing $$tool version" >&2; exit 1; }; done; \
+	grep -Eq '^FROM golang:[^ ]+@sha256:[0-9a-f]{64} AS builder$$' Dockerfile || { echo "Docker builder base is not digest-pinned" >&2; exit 1; }; \
+	grep -Eq '^FROM [^ ]+@sha256:[0-9a-f]{64}$$' Dockerfile || { echo "Docker runtime base is not digest-pinned" >&2; exit 1; }; \
+	grep -Eq '^        actionlint$$' .github/workflows/test.yml; \
+	grep -Eq '^        shellcheck ' .github/workflows/test.yml; \
+	echo "toolchain declarations aligned"
+
+test-asdf: ## Test the public asdf plugin scripts
+	@tests/asdf-plugin.sh
 
 # --- Docker ---------------------------------------------------------------
 
 docker-build: ## Build the container image as $(PREFIX):$(VERSION)
 	@docker build \
-	  --build-arg VERSION=$(VERSION) \
-	  -t $(PREFIX):$(VERSION) \
+	  --build-arg "VERSION=$(VERSION)" \
+	  --build-arg "REVISION=$$(git rev-parse HEAD 2>/dev/null || printf unknown)" \
+	  -t "$(PREFIX):$(VERSION)" \
 	  -t $(PREFIX):latest \
 	  -f Dockerfile .
 
 docker-run: ## Run the container image with a mounted config (CONFIG=path/to/config.hcl)
 	@if [ -z "$(CONFIG)" ]; then echo "usage: make docker-run CONFIG=path/to/config.hcl"; exit 1; fi
-	@docker run --rm -p 8080:8080 -v $(PWD)/$(CONFIG):/etc/s3proxy/config.hcl:ro \
-	  --env-file .env \
-	  $(PREFIX):latest
+	@config="$$(realpath -- "$(CONFIG)")" && docker run --rm -p 127.0.0.1:8080:8080 -v "$$config:/etc/s3proxy/config.hcl:ro" \
+	  --env-file .env "$(PREFIX):latest"
 
 # --- Sandbox (docker compose) ---------------------------------------------
 
@@ -178,47 +214,7 @@ test-integration-race: ## Run integration tests with the race detector
 	@go test -tags integration -race -count=1 -v ./internal/integration/...
 
 sandbox-integration-up: ## Start sandbox + s3proxy pointed at integration config
-	@test -f .env || { echo "missing .env (see .env.example)"; exit 1; }
-	@mkdir -p $(DIST_DIR)
-	@echo "-> starting sandbox stack (detached)"
-	@DAEMON=true $(MAKE) sandbox-up
-	@echo "-> waiting for sandbox init jobs"
-	@set -euo pipefail; \
-	  ids="$$( $(COMPOSE) ps -q minio-init seaweedfs-init )"; \
-	  test -n "$$ids" || { echo "sandbox init containers not found"; exit 1; }; \
-	  for id in $$ids; do \
-	    code="$$(docker wait $$id)"; \
-	    if [ "$$code" != "0" ]; then \
-	      echo "init container $$id exited with $$code"; \
-	      docker logs $$id; \
-	      exit 1; \
-	    fi; \
-	  done
-	@echo "-> building s3proxy"
-	@$(MAKE) build
-	@echo "-> starting s3proxy with $(INTEGRATION_CONFIG) (env from .env)"
-	@set -euo pipefail; \
-	  set -a; . ./.env; set +a; \
-	  ./$(DIST_DIR)/$(BINARY) serve --config $(INTEGRATION_CONFIG) >$(INTEGRATION_PROXY_LOG) 2>&1 & \
-	  p=$$!; \
-	  echo $$p > $(INTEGRATION_PROXY_PID); \
-	  echo "s3proxy pid: $$p  log: $(INTEGRATION_PROXY_LOG)"; \
-	  sleep 1; \
-	  if ! kill -0 $$p 2>/dev/null; then \
-	    echo "s3proxy exited immediately, log:"; \
-	    cat $(INTEGRATION_PROXY_LOG); \
-	    exit 1; \
-	  fi
-	@echo "-> running integration tests"
-	@set -euo pipefail; \
-	  rc=0; \
-	  set -a; . ./.env; set +a; \
-	  go test -tags integration -count=1 -v ./internal/integration/... || rc=$$?; \
-	  echo "-> stopping s3proxy"; \
-	  kill $$(cat $(INTEGRATION_PROXY_PID)) 2>/dev/null || true; \
-	  rm -f $(INTEGRATION_PROXY_PID); \
-	  $(MAKE) sandbox-down; \
-	  exit $$rc
+	@scripts/run-integration.sh
 
 sandbox-integration-down: ## Stop s3proxy (sandbox integration) + sandbox stack
 	@if [ -f $(INTEGRATION_PROXY_PID) ]; then \
