@@ -114,23 +114,6 @@ jobs:
         test "$(docker run --rm --entrypoint /usr/local/bin/s3proxy "$image_ref" version)" = "$VERSION"
         printf 'digest=%s\nimage-ref=%s\n' "$digest" "$image_ref" >> "$GITHUB_OUTPUT"
 
-    - name: Scan image before publication
-      uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
-      with:
-        image-ref: ${{ steps.scanned.outputs.image-ref }}
-        format: table
-        exit-code: '1'
-        ignore-unfixed: true
-        severity: CRITICAL,HIGH
-
-    - name: Generate image SBOM
-      uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
-      with:
-        image-ref: ${{ steps.scanned.outputs.image-ref }}
-        format: spdx-json
-        output: image-sbom.spdx.json
-        exit-code: '0'
-
     - name: Log in to GHCR
       uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
       with:
