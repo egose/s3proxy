@@ -1,6 +1,6 @@
 {
   "name": "s3proxy",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "A path-based multi-backend proxy for S3-compatible APIs, written in Go.",
   "license": "Apache-2.0",
   "author": "",
