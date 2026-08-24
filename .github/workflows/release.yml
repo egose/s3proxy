@@ -3,33 +3,188 @@ name: Release
 on:
   push:
     tags:
-    - v*.*.*
+    - v*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+  quality:
+    uses: ./.github/workflows/test.yml
 
+  publish:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/egose/s3proxy
+      TAG: ${{ github.ref_name }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Validate release identity
+      id: release
+      run: |
+        set -euo pipefail
+        identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+        [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
+        version=${TAG#v}
+        test "$(tr -d '\r\n' <VERSION)" = "$version"
+        test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+        test "$(git tag --points-at "$GITHUB_SHA" --list "$TAG")" = "$TAG"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
     - name: Setup Tools
       uses: ./.github/actions/setup-tools
 
-    - name: Build
+    - name: Build release archives
+      env:
+        VERSION: ${{ github.ref_name }}
       run: |
-        make build-all VERSION=${GITHUB_REF_NAME}
+        make build-all VERSION="$VERSION"
         make build-archive
 
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - name: Generate binary SBOM
+      uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84
       with:
-        name: s3proxy-${{ github.ref_name }}
-        path: dist/*.tar.gz
+        path: dist
+        format: spdx-json
+        output-file: dist/s3proxy.spdx.json
+        upload-artifact: false
 
-    - name: Release
-      uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+    - name: Finalize release checksums
+      run: (cd dist && sha256sum s3proxy.spdx.json >>SHA256SUMS)
+
+    - name: Attest binary provenance
+      uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+      with:
+        subject-path: |
+          dist/*.tar.gz
+          dist/SHA256SUMS
+          dist/s3proxy.spdx.json
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+    - name: Generate image metadata
+      id: meta
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302
+      with:
+        images: ${{ env.IMAGE }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+
+    - name: Build local image for scan
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+      with:
+        context: .
+        load: true
+        push: false
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          VERSION=${{ steps.release.outputs.version }}
+          REVISION=${{ github.sha }}
+
+    - name: Verify local image identity
+      id: scanned
+      env:
+        VERSION: ${{ steps.release.outputs.version }}
+      run: |
+        set -euo pipefail
+        image_ref="$IMAGE:$VERSION"
+        digest=$(docker image inspect "$image_ref" --format '{{.Id}}')
+        test "$(docker image inspect "$image_ref" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$VERSION"
+        test "$(docker image inspect "$image_ref" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+        test "$(docker run --rm --entrypoint /usr/local/bin/s3proxy "$image_ref" version)" = "$VERSION"
+        printf 'digest=%s\nimage-ref=%s\n' "$digest" "$image_ref" >> "$GITHUB_OUTPUT"
+
+    - name: Scan image before publication
+      uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+      with:
+        image-ref: ${{ steps.scanned.outputs.image-ref }}
+        format: table
+        exit-code: '1'
+        ignore-unfixed: true
+        severity: CRITICAL,HIGH
+
+    - name: Generate image SBOM
+      uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+      with:
+        image-ref: ${{ steps.scanned.outputs.image-ref }}
+        format: spdx-json
+        output: image-sbom.spdx.json
+        exit-code: '0'
+
+    - name: Log in to GHCR
+      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Push scanned image tags
+      run: |
+        set -euo pipefail
+        while IFS= read -r tag; do
+          test -n "$tag" || continue
+          docker image push "$tag"
+        done <<'TAGS'
+        ${{ steps.meta.outputs.tags }}
+        TAGS
+
+    - name: Verify published image identity
+      id: published
+      env:
+        CONFIG_DIGEST: ${{ steps.scanned.outputs.digest }}
+        IMAGE_REF: ${{ steps.scanned.outputs.image-ref }}
+      run: |
+        set -euo pipefail
+        manifest_digest=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{.Manifest.Digest}}')
+        while IFS= read -r tag; do
+          test -n "$tag" || continue
+          published_config=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Config.Digest}}')
+          test "$published_config" = "$CONFIG_DIGEST"
+        done <<'TAGS'
+        ${{ steps.meta.outputs.tags }}
+        TAGS
+        printf 'manifest-digest=%s\n' "$manifest_digest" >> "$GITHUB_OUTPUT"
+
+    - name: Attest image provenance
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.published.outputs.manifest-digest }}
+        push-to-registry: true
+
+    - name: Attest image SBOM
+      uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.published.outputs.manifest-digest }}
+        sbom-path: image-sbom.spdx.json
+        push-to-registry: true
+
+    - name: Publish GitHub release
+      uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7
       with:
         generate_release_notes: true
-        files: dist/*.tar.gz
+        files: |
+          dist/*.tar.gz
+          dist/SHA256SUMS
+          dist/s3proxy.spdx.json

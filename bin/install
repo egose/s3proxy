@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -euo pipefail
 
 tool_name="s3proxy"
 install_type="$ASDF_INSTALL_TYPE"
@@ -23,15 +23,27 @@ fi
     exit 1
   fi
 
-  mkdir -p "$install_path/bin"
-  tar -xzf "${archives[0]}" -C "$install_path/bin"
-
-  if [ ! -f "$install_path/bin/$tool_name" ] && [ ! -f "$install_path/bin/${tool_name}.exe" ]; then
-    echo "Release archive is missing the $tool_name binary." >&2
+  entries=$(tar -tzf "${archives[0]}")
+  if [ "$entries" != "$tool_name" ] && [ "$entries" != "${tool_name}.exe" ]; then
+    echo "Release archive must contain exactly one $tool_name binary." >&2
     exit 1
   fi
+  case "$entries" in /*|*../*) echo "Unsafe archive path: $entries" >&2; exit 1 ;; esac
+  test "$(tar -tvzf "${archives[0]}" | cut -c1)" = "-" || { echo "Release binary is not a regular file." >&2; exit 1; }
 
-  chmod +x "$install_path/bin"/* 2>/dev/null || true
+  parent=$(dirname "$install_path")
+  mkdir -p "$parent"
+  stage=$(mktemp -d "$parent/.${tool_name}.install.XXXXXX")
+  trap 'rm -rf "$stage"' EXIT
+  mkdir "$stage/bin"
+  tar -xzf "${archives[0]}" --no-same-owner --no-same-permissions -C "$stage/bin"
+  test -f "$stage/bin/$entries" && test ! -L "$stage/bin/$entries"
+  chmod 0755 "$stage/bin/$entries"
+  mkdir -p "$install_path"
+  test ! -e "$install_path/bin" || { echo "Install path already contains bin/" >&2; exit 1; }
+  mv "$stage/bin" "$install_path/bin"
+  rmdir "$stage"
+  trap - EXIT
 
   echo "$tool_name v$version installation was successful!"
 ) || {

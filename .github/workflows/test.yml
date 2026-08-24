@@ -1,24 +1,43 @@
 name: Test
 
 on:
+  workflow_call:
   pull_request:
     paths-ignore:
     - '**.md'
   push:
+    branches: [main, dev]
     paths-ignore:
     - '**.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   vet-build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
 
     - name: Setup Tools (asdf)
       uses: ./.github/actions/setup-tools
 
     - name: go vet
-      run: make vet
+      run: make check-toolchain vet
+
+    - name: Validate workflows, shell, and Compose
+      run: |
+        actionlint
+        shellcheck bin/* scripts/*.sh tests/*.sh .bin/*.sh
+        cp .env.example .env
+        docker-compose --env-file .env -f sandbox/docker-compose.yml config --quiet
 
     - name: go build (host)
       run: make build
@@ -28,10 +47,16 @@ jobs:
         make build-all
         make build-archive
 
+    - name: Test asdf plugin
+      run: make test-asdf
+
   unit-test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
 
     - name: Setup Tools (asdf)
       uses: ./.github/actions/setup-tools
@@ -47,6 +72,8 @@ jobs:
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
 
     - name: Setup Tools (asdf)
       uses: ./.github/actions/setup-tools
@@ -61,3 +88,7 @@ jobs:
     # tears down the proxy and stack — propagating the test exit code.
     - name: Run integration tests against sandbox stack
       run: make sandbox-integration-up
+
+    - name: Clean up integration stack
+      if: always()
+      run: make sandbox-integration-down
