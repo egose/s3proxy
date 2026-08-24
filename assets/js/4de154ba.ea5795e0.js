@@ -106,7 +106,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "make build\nmake build-all\nmake run CONFIG=path/to/config.hcl\nmake validate CONFIG=path/to/config.hcl\n"
+        children: "make build\npnpm release:build -- --version dev\npnpm release:verify -- --version dev --reproducibility\nmake run CONFIG=path/to/config.hcl\nmake validate CONFIG=path/to/config.hcl\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "The standard binary entrypoints are:"
@@ -131,6 +131,26 @@ function _createMdxContent(props) {
       }), " produces ", (0,jsx_runtime.jsx)(_components.code, {
         children: "dist/s3proxy"
       }), " for the host platform with CGO disabled."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "go-release.json"
+      }), " defines the release target matrix and archive contract.\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "pnpm release:build"
+      }), " creates deterministic ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "s3proxy-<os>-<arch>.tar.gz"
+      }), "\narchives and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "SHA256SUMS"
+      }), "; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "pnpm release:verify"
+      }), " checks those artifacts and\ntheir exact version output. Add ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--reproducibility"
+      }), " to perform two independent\nrebuilds and compare archive hashes. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "make build-all VERSION=<version>"
+      }), " remains\na compatibility wrapper for the package build."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Keep ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "SHA256SUMS"
+      }), " archive-only through package verification. The release\nworkflow appends the generated SBOM checksum only after verification and then\npublishes the archives, checksum manifest, and SBOM together."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "environment-variables",
       children: "Environment Variables"
