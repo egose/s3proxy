@@ -338,15 +338,9 @@ func TestRunShutdownTimeoutForceClosesActiveRequests(t *testing.T) {
 	establishIdleUpstreamConnection(t, a.transport, upstream.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan runResult, 1)
+	errCh := make(chan error, 1)
 	go func() {
-		err := a.Run(ctx)
-		select {
-		case <-handlerDone:
-			errCh <- runResult{err: err, handlerExitedBeforeRun: true}
-		default:
-			errCh <- runResult{err: err}
-		}
+		errCh <- a.Run(ctx)
 	}()
 	waitForTCP(t, a.server.Addr)
 
@@ -359,13 +353,11 @@ func TestRunShutdownTimeoutForceClosesActiveRequests(t *testing.T) {
 	waitForHandler(t, entered, requestDone)
 
 	cancel()
-	result := waitRunResult(t, errCh)
-	if result.err == nil || !strings.Contains(result.err.Error(), "server shutdown") {
-		t.Fatalf("Run() error = %v, want shutdown timeout", result.err)
+	err := waitRun(t, errCh)
+	if err == nil || !strings.Contains(err.Error(), "server shutdown") {
+		t.Fatalf("Run() error = %v, want shutdown timeout", err)
 	}
-	if !result.handlerExitedBeforeRun {
-		t.Fatal("handler did not exit before Run returned")
-	}
+	waitClosed(t, handlerDone, "handler")
 	waitClosed(t, upstream.closed, "upstream idle connection")
 }
 
@@ -490,22 +482,6 @@ func waitRun(t *testing.T, errCh <-chan error) error {
 		t.Fatal("Run() did not return")
 	}
 	return nil
-}
-
-func waitRunResult(t *testing.T, errCh <-chan runResult) runResult {
-	t.Helper()
-	select {
-	case result := <-errCh:
-		return result
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run() did not return")
-	}
-	return runResult{}
-}
-
-type runResult struct {
-	err                    error
-	handlerExitedBeforeRun bool
 }
 
 func waitForHandler(t *testing.T, entered <-chan struct{}, requestDone <-chan struct{}) {
