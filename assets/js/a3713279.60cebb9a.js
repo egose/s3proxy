@@ -181,7 +181,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Published GHCR images use semantic-version, major/minor, and major tags. The publishing workflow does not create a public ", (0,jsx_runtime.jsx)(_components.code, {
         children: "latest"
-      }), " tag."]
+      }), " tag. Before publishing, it smoke-tests and scans the exact local image, then verifies the pushed image digest and attaches provenance and SBOM attestations."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "systemd",
       children: "systemd"
