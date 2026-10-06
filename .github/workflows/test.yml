@@ -40,7 +40,8 @@ jobs:
         actionlint
         shellcheck bin/* scripts/*.sh tests/*.sh .bin/*.sh
         cp .env.example .env
-        docker-compose --env-file .env -f sandbox/docker-compose.yml config --quiet
+        bash scripts/sandbox-compose.sh config --quiet
+        make test-sandbox
 
     - name: go build (host)
       run: make build

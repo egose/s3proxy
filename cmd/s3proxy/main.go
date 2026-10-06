@@ -20,6 +20,8 @@ func main() {
 
 	rootCmd.AddCommand(newServeCommand())
 	rootCmd.AddCommand(newValidateCommand())
+	rootCmd.AddCommand(newRoutesCommand())
+	rootCmd.AddCommand(newPrintExampleConfigCommand())
 	rootCmd.AddCommand(newVersionCommand())
 
 	if err := rootCmd.Execute(); err != nil {

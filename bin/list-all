@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/semver.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/semver.sh"
+
 github_coordinates="${ASDF_S3PROXY_GITHUB_REPOSITORY:-egose/s3proxy}"
 [[ "$github_coordinates" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Invalid GitHub repository" >&2; exit 1; }
 
-git ls-remote --tags --refs "https://github.com/${github_coordinates}.git" |
-  awk '{sub("refs/tags/v?", "", $2); print $2}' |
-  awk '/^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$/' |
-  LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n -u |
+refs=$(git ls-remote --tags --refs "https://github.com/${github_coordinates}.git")
+printf '%s\n' "$refs" |
+  awk -F '\t' 'NF == 2 && $2 ~ /^refs\/tags\// {sub(/^refs\/tags\/v?/, "", $2); print $2}' |
+  semver_sort |
   paste -sd ' ' -

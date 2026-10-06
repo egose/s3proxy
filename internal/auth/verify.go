@@ -17,6 +17,8 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/replaybody"
+	"github.com/egose/s3proxy/internal/requestpayload"
+	"github.com/egose/s3proxy/internal/requestquery"
 )
 
 const (
@@ -35,7 +37,7 @@ type sigV4Verifier struct {
 
 func newSigV4Verifier(clientsByAK map[string]config.Client, defaultRegion string, replayBudget *replaybody.Budget) *sigV4Verifier {
 	return &sigV4Verifier{
-		signer:        v4.NewSigner(),
+		signer:        v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true }),
 		clientsByAK:   clientsByAK,
 		defaultRegion: defaultRegion,
 		replayBudget:  replayBudget,
@@ -44,11 +46,18 @@ func newSigV4Verifier(clientsByAK map[string]config.Client, defaultRegion string
 }
 
 func (v *sigV4Verifier) Verify(r *http.Request) (*Principal, error) {
+	query, err := requestquery.Parse(r.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	if err := requestpayload.Validate(r.Header); err != nil {
+		return nil, err
+	}
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
 		return v.verifyHeader(r)
 	}
-	return v.verifyQuery(r)
+	return v.verifyQuery(r, query)
 }
 
 func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
@@ -113,8 +122,7 @@ func (v *sigV4Verifier) verifyHeader(r *http.Request) (*Principal, error) {
 	return principalFromClient(client), nil
 }
 
-func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
-	query := r.URL.Query()
+func (v *sigV4Verifier) verifyQuery(r *http.Request, query url.Values) (*Principal, error) {
 	if err := rejectDuplicatePresignParams(query); err != nil {
 		return nil, err
 	}
@@ -149,7 +157,7 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 	if _, err := requiredPresignParam(query, "X-Amz-Expires", errMissingExpires); err != nil {
 		return nil, err
 	}
-	if err := v.checkPresignWindow(r, date); err != nil {
+	if err := v.checkPresignWindow(query.Get("X-Amz-Expires"), date); err != nil {
 		return nil, err
 	}
 
@@ -176,9 +184,8 @@ func (v *sigV4Verifier) verifyQuery(r *http.Request) (*Principal, error) {
 	}
 	clone := r.Clone(context.Background())
 	clone.Body = http.NoBody
-	cloneQuery := clone.URL.Query()
-	cloneQuery.Del("X-Amz-Signature")
-	clone.URL.RawQuery = cloneQuery.Encode()
+	query.Del("X-Amz-Signature")
+	clone.URL.RawQuery = query.Encode()
 	stripUnsignedHeaders(clone, signedHeaders)
 
 	creds := aws.Credentials{
@@ -309,8 +316,7 @@ func (v *sigV4Verifier) checkDateSkew(amzDate string) error {
 	return nil
 }
 
-func (v *sigV4Verifier) checkPresignWindow(r *http.Request, amzDate string) error {
-	expiresRaw := r.URL.Query().Get("X-Amz-Expires")
+func (v *sigV4Verifier) checkPresignWindow(expiresRaw, amzDate string) error {
 	expiresSeconds, err := strconv.ParseInt(expiresRaw, 10, 64)
 	if err != nil {
 		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)

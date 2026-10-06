@@ -49,7 +49,7 @@ jobs:
         pnpm release:verify -- --version "$VERSION" --reproducibility
 
     - name: Generate binary SBOM
-      uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84
+      uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
       with:
         path: dist
         format: spdx-json
@@ -60,7 +60,7 @@ jobs:
       run: (cd dist && sha256sum s3proxy.spdx.json >>SHA256SUMS)
 
     - name: Attest binary provenance
-      uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
       with:
         subject-path: |
           dist/*.tar.gz
@@ -92,7 +92,7 @@ jobs:
         path: dist
 
     - name: Publish GitHub release
-      uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
       with:
         generate_release_notes: true
         files: |

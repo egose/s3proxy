@@ -2,8 +2,11 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 
+	"github.com/egose/s3proxy/internal/namespace"
 	"github.com/egose/s3proxy/internal/s3op"
 )
 
@@ -36,6 +39,13 @@ func validateListener(l Listener) error {
 	if l.Address == "" {
 		return fmt.Errorf("listener.http %q: address is required", l.Name)
 	}
+	_, port, err := net.SplitHostPort(l.Address)
+	if err != nil || strings.Contains(l.Address, "://") {
+		return fmt.Errorf("listener.http %q: address must use TCP host:port syntax", l.Name)
+	}
+	if !listenerPortInRange(port) {
+		return fmt.Errorf("listener.http %q: address numeric port must be between 0 and 65535", l.Name)
+	}
 	if l.MaxHeaderBytes < 0 {
 		return fmt.Errorf("listener.http %q: max_header_bytes must be >= 0", l.Name)
 	}
@@ -55,6 +65,31 @@ func validateListener(l Listener) error {
 		return fmt.Errorf("listener.http %q: virtual_hosted requires at least one host_suffix", l.Name)
 	}
 	return nil
+}
+
+func listenerPortInRange(port string) bool {
+	negative := strings.HasPrefix(port, "-")
+	if negative || strings.HasPrefix(port, "+") {
+		port = port[1:]
+	}
+	var n uint32
+	outOfRange := false
+	for _, digit := range port {
+		if digit < '0' || digit > '9' {
+			return true
+		}
+		if n >= 1<<30 {
+			return false
+		}
+		n *= 10
+		next := n + uint32(digit-'0')
+		if next < n {
+			return false
+		}
+		n = next
+		outOfRange = outOfRange || n > 65535
+	}
+	return !outOfRange && (!negative || n == 0)
 }
 
 func validateAuth(a Auth) error {
@@ -81,7 +116,7 @@ func validateAuth(a Auth) error {
 			return fmt.Errorf("auth %q: at least one client is required for sigv4_static mode", a.Name)
 		}
 	default:
-		return fmt.Errorf("auth %q: invalid mode %q (must be none or sigv4_static)", a.Name, a.Mode)
+		return fmt.Errorf("auth %q: invalid mode (must be none or sigv4_static)", a.Name)
 	}
 	return nil
 }
@@ -158,40 +193,40 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 			return fmt.Errorf("route %q: parser is required", r.Name)
 		}
 		if _, ok := parsers[r.ParserRef]; !ok {
-			return fmt.Errorf("route %q: unknown parser %q", r.Name, r.ParserRef)
+			return fmt.Errorf("route %q: unknown parser ref", r.Name)
 		}
 		if len(r.DestinationRefs) == 0 {
 			return fmt.Errorf("route %q: at least one destination is required", r.Name)
 		}
-		seenDestinations := make(map[string]string, len(r.DestinationRefs))
+		seenDestinations := make(map[string]bool, len(r.DestinationRefs))
 		for _, d := range r.DestinationRefs {
 			targetName := stripRefPrefix(d)
-			if existing, dup := seenDestinations[targetName]; dup {
-				return fmt.Errorf("route %q: destinations contain duplicate target %q from %q and %q", r.Name, targetName, existing, d)
+			if seenDestinations[targetName] {
+				return fmt.Errorf("route %q: destinations contain duplicate target", r.Name)
 			}
-			seenDestinations[targetName] = d
+			seenDestinations[targetName] = true
 			if _, ok := targets[targetName]; !ok {
-				return fmt.Errorf("route %q: unknown destination %q", r.Name, d)
+				return fmt.Errorf("route %q: unknown destination in destinations", r.Name)
 			}
 		}
 		switch r.Dispatch {
 		case DispatchFirst, DispatchAll:
 		default:
-			return fmt.Errorf("route %q: invalid dispatch %q", r.Name, r.Dispatch)
+			return fmt.Errorf("route %q: invalid dispatch (must be first or all)", r.Name)
 		}
 		switch r.OnMatch {
 		case MatchStop:
 		case MatchContinue:
 			if !routeSupportsContinue(r) {
-				return fmt.Errorf("route %q: on_match %q is only implemented for write-only routes", r.Name, r.OnMatch)
+				return fmt.Errorf("route %q: on_match continue is only implemented for write-only routes", r.Name)
 			}
 		default:
-			return fmt.Errorf("route %q: invalid on_match %q", r.Name, r.OnMatch)
+			return fmt.Errorf("route %q: invalid on_match (must be stop or continue)", r.Name)
 		}
 		switch r.ReadPreference {
 		case ReadFirst, ReadRandom, ReadHash, ReadOrderedFailover:
 		default:
-			return fmt.Errorf("route %q: invalid read_preference %q", r.Name, r.ReadPreference)
+			return fmt.Errorf("route %q: invalid read_preference (must be first, random, hash or ordered_failover)", r.Name)
 		}
 		if len(r.Operations) == 0 {
 			return fmt.Errorf("route %q: at least one operation is required", r.Name)
@@ -199,21 +234,46 @@ func validateRoutes(routes []Route, parsers map[string]Parser, targets map[strin
 		seenOperations := make(map[string]bool, len(r.Operations))
 		for _, op := range r.Operations {
 			if seenOperations[op] {
-				return fmt.Errorf("route %q: operations contain duplicate entry %q", r.Name, op)
+				return fmt.Errorf("route %q: operations contain duplicate entry", r.Name)
 			}
 			seenOperations[op] = true
+			if op == string(s3op.ListObjectsV2) {
+				if err := ValidateListingRewrite(r.Rewrite); err != nil {
+					return fmt.Errorf("route %q: ListObjectsV2: %w", r.Name, err)
+				}
+			}
 			if !s3op.IsConfigurable(op) {
-				return fmt.Errorf("route %q: unsupported operation %q", r.Name, op)
+				return fmt.Errorf("route %q: unsupported operation in operations", r.Name)
 			}
 			if r.Dispatch == DispatchAll && !supportsDispatchAllRouteOperation(op) {
-				return fmt.Errorf("route %q: dispatch %q does not support write operation %q", r.Name, r.Dispatch, op)
+				return fmt.Errorf("route %q: dispatch all does not support a configured write operation", r.Name)
 			}
 		}
 		if r.Dispatch == DispatchAll && !routeHasFanoutWrite(r) {
-			return fmt.Errorf("route %q: dispatch %q requires PutObject or DeleteObject", r.Name, r.Dispatch)
+			return fmt.Errorf("route %q: dispatch all requires PutObject or DeleteObject", r.Name)
 		}
 		if r.Dispatch == DispatchAll && !routeHasRead(r) && r.ReadPreference != ReadFirst {
 			return fmt.Errorf("route %q: read_preference is ignored for dispatch=all", r.Name)
+		}
+	}
+	return nil
+}
+
+func ValidateListingRewrite(rw RewriteRule) error {
+	if rw.StripPathPrefix != "" || rw.StripKeyPrefix != "" {
+		return fmt.Errorf("%w: strip_path_prefix and strip_key_prefix are unsupported", namespace.ErrMapping)
+	}
+	if _, err := url.PathUnescape(rw.PrependKeyPrefix); err != nil {
+		return fmt.Errorf("%w: prepend_key_prefix must use valid percent escapes", namespace.ErrMapping)
+	}
+	if rw.KeyTemplate != "" {
+		if err := namespace.ValidateTemplate(rw.CompiledTemplate); err != nil {
+			return fmt.Errorf("key_template: %w", err)
+		}
+		if prefix, err := namespace.RawTemplatePrefix(rw.CompiledTemplate, rw.Bucket, nil); err == nil {
+			if _, err := namespace.New("", prefix+rw.PrependKeyPrefix); err != nil {
+				return fmt.Errorf("key_template and prepend_key_prefix: %w", err)
+			}
 		}
 	}
 	return nil
@@ -235,11 +295,11 @@ func validateBuckets(buckets []VirtualBucket, routes []Route) error {
 			return fmt.Errorf("bucket %q: visible_name is required", b.Name)
 		}
 		if existing, dup := visibleNames[b.VisibleName]; dup {
-			return fmt.Errorf("duplicate visible bucket name %q (from %q and %q)", b.VisibleName, existing, b.Name)
+			return fmt.Errorf("bucket %q: duplicate visible_name (also in bucket %q)", b.Name, existing)
 		}
 		visibleNames[b.VisibleName] = b.Name
 		if !routeNames[b.RouteRef] {
-			return fmt.Errorf("bucket %q: unknown route ref %q", b.Name, b.RouteRef)
+			return fmt.Errorf("bucket %q: unknown route ref", b.Name)
 		}
 	}
 	return nil
@@ -275,14 +335,14 @@ func validateClientStringRefs(authName, clientName, field string, refs []string,
 	seen := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		if seen[ref] {
-			return fmt.Errorf("auth %q: client %q: %s contains duplicate entry %q", authName, clientName, field, ref)
+			return fmt.Errorf("auth %q: client %q: %s contains duplicate entry", authName, clientName, field)
 		}
 		seen[ref] = true
 		if ref == "*" {
 			continue
 		}
 		if !known[ref] {
-			return fmt.Errorf("auth %q: client %q: %s references unknown %s %q", authName, clientName, field, policyRefKind(field), ref)
+			return fmt.Errorf("auth %q: client %q: %s references unknown %s", authName, clientName, field, policyRefKind(field))
 		}
 	}
 	return nil
@@ -292,14 +352,14 @@ func validateClientOps(authName string, c Client) error {
 	seen := make(map[string]bool, len(c.AllowOps))
 	for _, op := range c.AllowOps {
 		if seen[op] {
-			return fmt.Errorf("auth %q: client %q: allow_ops contains duplicate entry %q", authName, c.Name, op)
+			return fmt.Errorf("auth %q: client %q: allow_ops contains duplicate entry", authName, c.Name)
 		}
 		seen[op] = true
 		if op == "*" {
 			continue
 		}
 		if !s3op.IsConfigurable(op) {
-			return fmt.Errorf("auth %q: client %q: allow_ops contains unsupported operation %q", authName, c.Name, op)
+			return fmt.Errorf("auth %q: client %q: allow_ops contains unsupported operation", authName, c.Name)
 		}
 	}
 	return nil

@@ -59,6 +59,55 @@ docker run --rm \
 
 If your config depends on more `env("...")` values, pass them in as environment variables or via an env file.
 
+### Authenticated Starter In Docker
+
+The image entrypoint already includes `serve --config /etc/s3proxy/config.hcl`.
+Use an explicit executable override for other CLI commands (the distroless image
+has no shell). With a locally built `s3proxy` image:
+
+```sh
+docker run --rm --network none --entrypoint /usr/local/bin/s3proxy \
+  s3proxy print-example-config > config.hcl
+```
+
+The host shell writes `config.hcl`; printing needs no variables or mounts. Edit
+its native `address = "127.0.0.1:8080"` to **`address = ":8080"` inside the container**.
+Container loopback cannot receive traffic forwarded to published ports.
+
+Prepare `starter.env` with the five variables from the
+[authenticated native quickstart](quickstart.md#authenticated-binary-only-starter):
+`S3PROXY_CLIENT_ACCESS_KEY`, `S3PROXY_CLIENT_SECRET_KEY`,
+`S3PROXY_TARGET_PRIMARY_ENDPOINT`, `S3PROXY_TARGET_PRIMARY_ACCESS_KEY`, and
+`S3PROXY_TARGET_PRIMARY_SECRET_KEY`. Use private client keys and real backend
+credentials, not the synthetic offline values. In a Docker env file use
+`NAME=value` lines without shell `export` statements. Protect that file and make
+the mounted config readable by the image's nonroot user.
+
+The endpoint must be reachable **from the container**; `127.0.0.1:9000` there means
+the container itself, not the host or another backend container. Use an appropriate
+backend DNS name on your container network or a routable endpoint. Pre-create
+`images-store`, and check the starter's `us-east-1` region and timeout/replay bounds
+against your deployment.
+
+```sh
+docker run --rm --network none --entrypoint /usr/local/bin/s3proxy \
+  --env-file ./starter.env -v "$PWD/config.hcl:/etc/s3proxy/config.hcl:ro" \
+  s3proxy validate --config /etc/s3proxy/config.hcl
+docker run --rm --network none --entrypoint /usr/local/bin/s3proxy \
+  --env-file ./starter.env -v "$PWD/config.hcl:/etc/s3proxy/config.hcl:ro" \
+  s3proxy routes --config /etc/s3proxy/config.hcl
+docker run --rm -p 127.0.0.1:8080:8080 \
+  --env-file ./starter.env -v "$PWD/config.hcl:/etc/s3proxy/config.hcl:ro" \
+  s3proxy
+```
+
+The last command uses the normal serve entrypoint and restricts publishing to host
+loopback. Add your backend container network as needed. For remote clients, apply
+network access controls and [TLS termination](#reverse-proxying); SigV4 does not
+encrypt HTTP traffic. These are deployment instructions, not a claim of live
+Docker/backend verification. Automated starter checks exercise native CLI output,
+validation, and topology offline.
+
 ## Docker Compose
 
 Example `compose.yaml`:
@@ -141,7 +190,19 @@ Before rollout:
 4. Exercise one read path and one write path through the proxy.
 5. If using `dispatch = "all"` or `ordered_failover`, test those behaviors before production rollout.
 
-`/healthz` and `/readyz` are unauthenticated endpoints on the main listener. `/readyz` reports only that the process is serving requests; it does not probe target backends. Configure load-balancer health checks against `/readyz`, and restrict access at the network or reverse-proxy layer if needed. The distroless image does not include a shell or HTTP client for an in-container health command.
+`validate` and `routes` check listener TCP `host:port` structure and the numeric
+port range offline. Missing port separators, URL-form addresses, and out-of-range
+numeric ports now fail this gate before any success output or startup logging.
+Wildcard hosts, hostnames, bracketed IPv6 with zones, named services, and zero or
+empty (ephemeral) ports remain supported. See the [listener address contract](configuration.md#listener-address-validation).
+Passing validation does not establish hostname/service resolution, interface or
+address ownership, bind permissions, or port availability in the deployment
+environment. Confirm those when starting the service; an occupied port or a valid
+but unavailable local address intentionally passes offline inspection.
+
+Configure load-balancer health checks as unsigned **GET** requests to the exact `/readyz` path on a localhost, IP, or base host, with no `Authorization` header and no query string (not even a bare `?`). `/healthz` has the same request contract. Eligible probes return `200 OK` with body `ok`, including on virtual-host-only listeners. `/readyz` reports only that the process is serving requests; it does not probe target backends.
+
+Configured virtual bucket hosts, signed/presigned requests, HEAD and other methods, encoded path spellings, and query-bearing requests use normal S3 handling instead of local probes. The exact unsigned query-free base-host GET shape is reserved for probes; unconfigured aliases cannot be recognized as virtual bucket hosts. Use the listener's configured host suffixes when choosing a health-check host. Restrict access at the network or reverse-proxy layer if needed. The distroless image does not include a shell or HTTP client for an in-container health command. See [the API reference](api-reference.md#health-endpoints) for the full boundary contract.
 
 The process handles `SIGINT` and `SIGTERM` with a 10-second graceful-shutdown window before active connections are forcibly closed. Configure service managers and orchestrators with a termination grace period longer than 10 seconds.
 

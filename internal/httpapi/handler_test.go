@@ -301,11 +301,8 @@ func TestHandler_LaterResetFailureClosesEarlierSuccess(t *testing.T) {
 	}
 }
 
-func TestHandler_LaterRewriteFailureClosesEarlierSuccess(t *testing.T) {
-	firstBody := &trackingReadCloser{Reader: strings.NewReader("ok")}
-	dispatcher := &stubFanout{
-		results: []*dispatch.Result{{Primary: &s3.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: firstBody}}},
-	}
+func TestHandler_LaterRewriteFailurePreventsAllDispatch(t *testing.T) {
+	dispatcher := &countingDispatcher{}
 	h := NewHandler(Dependencies{
 		Addressing:    config.Addressing{PathStyle: true},
 		ReplayBudget:  replaybody.NewBudget(replaybody.DefaultMaxBytes, replaybody.DefaultAggregateMaxBytes),
@@ -324,8 +321,8 @@ func TestHandler_LaterRewriteFailureClosesEarlierSuccess(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
 	}
-	if !firstBody.closed {
-		t.Fatal("expected earlier retained response body to be closed")
+	if dispatcher.calls != 0 {
+		t.Fatalf("dispatch calls = %d, want 0", dispatcher.calls)
 	}
 }
 
@@ -632,7 +629,7 @@ func TestWriteS3Response_StripsHopByHopHeaders(t *testing.T) {
 			"X-End-To-End": []string{"ok"},
 		},
 		Body: io.NopCloser(strings.NewReader("ok")),
-	})
+	}, slog.Default())
 
 	resp := rr.Result()
 	if got := resp.Header.Get("Connection"); got != "" {
@@ -711,7 +708,14 @@ func TestHandler_LogsAndClosesResponseBodyCopyError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
 	rr := httptest.NewRecorder()
 
-	h.ServeHTTP(rr, req)
+	func() {
+		defer func() {
+			if got := recover(); got != http.ErrAbortHandler {
+				t.Errorf("panic = %v, want http.ErrAbortHandler", got)
+			}
+		}()
+		h.ServeHTTP(rr, req)
+	}()
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
@@ -724,6 +728,9 @@ func TestHandler_LogsAndClosesResponseBodyCopyError(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "response copy failed") || !strings.Contains(logs.String(), sentinel.Error()) {
 		t.Fatalf("logs = %q, want copy error", logs.String())
+	}
+	if !strings.Contains(logs.String(), "request complete") {
+		t.Fatalf("logs = %q, want completion record", logs.String())
 	}
 }
 
@@ -1034,8 +1041,8 @@ func (s stubResolver) Resolve(*requestctx.Context, s3ops.Operation) ([]router.Ma
 
 type stubRewriter struct{}
 
-func (stubRewriter) Apply(*requestctx.Context, config.RewriteRule, map[string]string) (rewrite.Result, error) {
-	return rewrite.Result{Bucket: "bucket", Key: "key"}, nil
+func (stubRewriter) Apply(ctx *requestctx.Context, _ config.RewriteRule, _ map[string]string) (rewrite.Result, error) {
+	return rewrite.Result{Bucket: ctx.Bucket, Key: ctx.Key}, nil
 }
 
 type sequenceRewriter struct {

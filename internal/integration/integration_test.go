@@ -16,11 +16,13 @@ import (
 // stack must be up before tests run; waitForReady blocks up to 60s.
 func TestHealthReady(t *testing.T) {
 	waitForReady(t, 60*time.Second)
-	resp, body := signedRequest(t, http.MethodGet, "/healthz", nil, nil)
-	_ = body
-	assertStatus(t, resp, body, 200)
-	resp, body = signedRequest(t, http.MethodGet, "/readyz", nil, nil)
-	assertStatus(t, resp, body, 200)
+	for _, path := range []string{"/healthz", "/readyz"} {
+		resp, body := doRequest(t, newProxyRequest(t, http.MethodGet, path, nil, nil))
+		assertStatus(t, resp, body, 200)
+		if string(body) != "ok" {
+			t.Errorf("%s body = %q, want ok", path, body)
+		}
+	}
 }
 
 // TestSingleDestRoundTrip proves the simplest end-to-end path: a signed

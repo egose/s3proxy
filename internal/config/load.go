@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -13,6 +12,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/function"
 )
 
 func LoadFile(path string) (*Runtime, error) {
@@ -24,49 +25,35 @@ func LoadFile(path string) (*Runtime, error) {
 }
 
 func Load(src []byte, filename string) (*Runtime, error) {
-	src = trimLeadingNewlines(src)
-	expanded := expandEnvCalls(src)
-
-	file, diags := hclsyntax.ParseConfig(expanded, filename, hcl.Pos{Line: 1, Column: 1})
+	file, diags := hclsyntax.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("parse config %s: %s", filename, diags.Error())
 	}
 
+	ctx := &hcl.EvalContext{
+		Functions: map[string]function.Function{
+			"env": function.New(&function.Spec{
+				Params: []function.Parameter{{Name: "name", Type: cty.String}},
+				Type:   function.StaticReturnType(cty.String),
+				Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+					return cty.StringVal(os.Getenv(args[0].AsString())), nil
+				},
+			}),
+		},
+	}
 	var raw rawFile
-	if d := gohcl.DecodeBody(file.Body, nil, &raw); d.HasErrors() {
-		return nil, fmt.Errorf("decode config %s: %s", filename, d.Error())
+	if d := gohcl.DecodeBody(file.Body, ctx, &raw); d.HasErrors() {
+		return nil, fmt.Errorf("decode config %s: %s", filename, decodeDiagnostics(file.Body.(*hclsyntax.Body), d))
 	}
 
 	rt, err := buildRuntime(&raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("compile config %s: %w", filename, err)
 	}
 	if err := Validate(rt); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validate config %s: %w", filename, err)
 	}
 	return rt, nil
-}
-
-// expandEnvCalls replaces env("VAR") calls in the HCL source with the literal
-// environment value, so credential secret injection works without a full HCL
-// evaluation context.
-func expandEnvCalls(src []byte) []byte {
-	re := regexp.MustCompile(`env\("([^"]+)"\)`)
-	return re.ReplaceAllFunc(src, func(match []byte) []byte {
-		sub := re.FindSubmatch(match)
-		if len(sub) < 2 {
-			return []byte(`""`)
-		}
-		val := os.Getenv(string(sub[1]))
-		return []byte(strconv.Quote(val))
-	})
-}
-
-func trimLeadingNewlines(src []byte) []byte {
-	for len(src) > 0 && (src[0] == '\n' || src[0] == '\r' || src[0] == ' ' || src[0] == '\t') {
-		src = src[1:]
-	}
-	return src
 }
 
 type rawFile struct {
@@ -97,10 +84,14 @@ type rawAddressing struct {
 }
 
 type rawTimeouts struct {
-	Read       string `hcl:"read,optional"`
-	ReadHeader string `hcl:"read_header,optional"`
-	Idle       string `hcl:"idle,optional"`
-	Write      string `hcl:"write,optional"`
+	Read            string    `hcl:"read,optional"`
+	ReadHeader      string    `hcl:"read_header,optional"`
+	Idle            string    `hcl:"idle,optional"`
+	Write           string    `hcl:"write,optional"`
+	ReadRange       hcl.Range `hcl:"read,attr_value_range"`
+	ReadHeaderRange hcl.Range `hcl:"read_header,attr_value_range"`
+	IdleRange       hcl.Range `hcl:"idle,attr_value_range"`
+	WriteRange      hcl.Range `hcl:"write,attr_value_range"`
 }
 
 type rawAuth struct {
@@ -126,22 +117,25 @@ type rawCredential struct {
 }
 
 type rawTarget struct {
-	Type           string `hcl:"type,label"`
-	Name           string `hcl:"name,label"`
-	Endpoint       string `hcl:"endpoint"`
-	Region         string `hcl:"region"`
-	ForcePathStyle bool   `hcl:"force_path_style,optional"`
-	Timeout        string `hcl:"timeout,optional"`
-	Credentials    string `hcl:"credentials"`
+	Type           string    `hcl:"type,label"`
+	Name           string    `hcl:"name,label"`
+	Endpoint       string    `hcl:"endpoint"`
+	Region         string    `hcl:"region"`
+	ForcePathStyle bool      `hcl:"force_path_style,optional"`
+	Timeout        string    `hcl:"timeout,optional"`
+	Credentials    string    `hcl:"credentials"`
+	EndpointRange  hcl.Range `hcl:"endpoint,attr_value_range"`
+	TimeoutRange   hcl.Range `hcl:"timeout,attr_value_range"`
 }
 
 type rawParser struct {
-	Type    string `hcl:"type,label"`
-	Name    string `hcl:"name,label"`
-	Prefix  string `hcl:"prefix,optional"`
-	Bucket  string `hcl:"bucket,optional"`
-	Pattern string `hcl:"pattern,optional"`
-	Suffix  string `hcl:"suffix,optional"`
+	Type         string    `hcl:"type,label"`
+	Name         string    `hcl:"name,label"`
+	Prefix       string    `hcl:"prefix,optional"`
+	Bucket       string    `hcl:"bucket,optional"`
+	Pattern      string    `hcl:"pattern,optional"`
+	Suffix       string    `hcl:"suffix,optional"`
+	PatternRange hcl.Range `hcl:"pattern,attr_value_range"`
 }
 
 type rawRoute struct {
@@ -156,11 +150,12 @@ type rawRoute struct {
 }
 
 type rawRewrite struct {
-	StripPathPrefix  string `hcl:"strip_path_prefix,optional"`
-	StripKeyPrefix   string `hcl:"strip_key_prefix,optional"`
-	PrependKeyPrefix string `hcl:"prepend_key_prefix,optional"`
-	Bucket           string `hcl:"bucket,optional"`
-	KeyTemplate      string `hcl:"key_template,optional"`
+	StripPathPrefix  string    `hcl:"strip_path_prefix,optional"`
+	StripKeyPrefix   string    `hcl:"strip_key_prefix,optional"`
+	PrependKeyPrefix string    `hcl:"prepend_key_prefix,optional"`
+	Bucket           string    `hcl:"bucket,optional"`
+	KeyTemplate      string    `hcl:"key_template,optional"`
+	KeyTemplateRange hcl.Range `hcl:"key_template,attr_value_range"`
 }
 
 type rawBucket struct {
@@ -200,7 +195,7 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 	}
 	if l.Timeouts != nil {
 		var err error
-		listener.Timeouts, err = parseTimeouts(l.Timeouts)
+		listener.Timeouts, err = parseTimeouts(l.Timeouts, l.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -265,11 +260,11 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 		}
 		endpointURL, err := url.Parse(t.Endpoint)
 		if err != nil {
-			return nil, fmt.Errorf("target.s3 %q: invalid endpoint: %w", t.Name, err)
+			return nil, compileError(t.EndpointRange, "target.s3", t.Name, "endpoint", endpointCause(err))
 		}
 		timeout, err := parseOptionalDuration(t.Timeout)
 		if err != nil {
-			return nil, fmt.Errorf("target.s3 %q: invalid timeout: %w", t.Name, err)
+			return nil, compileError(t.TimeoutRange, "target.s3", t.Name, "timeout", "expected a duration such as 5s or 1m")
 		}
 		rt.Targets[t.Name] = S3Target{
 			Name:           t.Name,
@@ -293,7 +288,7 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 			var err error
 			compiled, err = regexp.Compile(p.Pattern)
 			if err != nil {
-				return nil, fmt.Errorf("parser.bucket_regex %q: invalid pattern: %w", p.Name, err)
+				return nil, compileError(p.PatternRange, "parser.bucket_regex", p.Name, "pattern", patternCause(err))
 			}
 		}
 		rt.Parsers[p.Name] = Parser{
@@ -311,11 +306,11 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 	for _, r := range raw.Routes {
 		parserName := stripRefPrefix(r.Parser)
 		if _, ok := rt.Parsers[parserName]; !ok {
-			return nil, fmt.Errorf("route %q: unknown parser ref %q", r.Name, r.Parser)
+			return nil, fmt.Errorf("route %q: unknown parser ref", r.Name)
 		}
 		for _, d := range r.Destinations {
 			if _, ok := rt.Targets[stripRefPrefix(d)]; !ok {
-				return nil, fmt.Errorf("route %q: unknown destination ref %q", r.Name, d)
+				return nil, fmt.Errorf("route %q: unknown destination ref in destinations", r.Name)
 			}
 		}
 		route := Route{
@@ -336,7 +331,7 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 				var err error
 				compiledTemplate, err = template.New("key").Option("missingkey=error").Parse(r.Rewrite.KeyTemplate)
 				if err != nil {
-					return nil, fmt.Errorf("route %q: invalid key_template: %w", r.Name, err)
+					return nil, compileError(r.Rewrite.KeyTemplateRange, "route", r.Name, "key_template", templateCause(err))
 				}
 			}
 			route.Rewrite = RewriteRule{
@@ -363,33 +358,33 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 	return rt, nil
 }
 
-func parseTimeouts(t *rawTimeouts) (Timeouts, error) {
+func parseTimeouts(t *rawTimeouts, listenerName string) (Timeouts, error) {
 	out := Timeouts{}
 	if t.Read != "" {
 		d, err := time.ParseDuration(t.Read)
 		if err != nil {
-			return out, fmt.Errorf("invalid read timeout: %w", err)
+			return out, compileError(t.ReadRange, "listener.http", listenerName, "read timeout", "expected a duration such as 5s or 1m")
 		}
 		out.Read = d
 	}
 	if t.ReadHeader != "" {
 		d, err := time.ParseDuration(t.ReadHeader)
 		if err != nil {
-			return out, fmt.Errorf("invalid read_header timeout: %w", err)
+			return out, compileError(t.ReadHeaderRange, "listener.http", listenerName, "read_header timeout", "expected a duration such as 5s or 1m")
 		}
 		out.ReadHeader = d
 	}
 	if t.Idle != "" {
 		d, err := time.ParseDuration(t.Idle)
 		if err != nil {
-			return out, fmt.Errorf("invalid idle timeout: %w", err)
+			return out, compileError(t.IdleRange, "listener.http", listenerName, "idle timeout", "expected a duration such as 5s or 1m")
 		}
 		out.Idle = d
 	}
 	if t.Write != "" {
 		d, err := time.ParseDuration(t.Write)
 		if err != nil {
-			return out, fmt.Errorf("invalid write timeout: %w", err)
+			return out, compileError(t.WriteRange, "listener.http", listenerName, "write timeout", "expected a duration such as 5s or 1m")
 		}
 		out.Write = d
 	}
@@ -407,7 +402,7 @@ func resolveCredentialRef(ref string, creds map[string]StaticCredential) (Static
 	name := stripRefPrefix(ref)
 	c, ok := creds[name]
 	if !ok {
-		return StaticCredential{}, fmt.Errorf("unknown credential.static ref %q", ref)
+		return StaticCredential{}, fmt.Errorf("unknown credential.static ref in credentials")
 	}
 	return c, nil
 }

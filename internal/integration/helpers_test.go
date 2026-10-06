@@ -86,7 +86,7 @@ func signRequest(t *testing.T, r *http.Request, body []byte) {
 	if r.Header.Get("X-Amz-Content-Sha256") == "" {
 		r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	}
-	signer := v4.NewSigner()
+	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
 	if err := signer.SignHTTP(context.Background(), creds, r, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Now().UTC()); err != nil {
 		t.Fatalf("SignHTTP failed: %v", err)
 	}
@@ -168,7 +168,7 @@ func signPresignedRequest(t *testing.T, r *http.Request, signedAt time.Time, exp
 	query.Set("X-Amz-Expires", strconv.FormatInt(int64(expires/time.Second), 10))
 	r.URL.RawQuery = query.Encode()
 
-	signedURI, _, err := v4.NewSigner().PresignHTTP(
+	signedURI, _, err := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true }).PresignHTTP(
 		context.Background(),
 		aws.Credentials{AccessKeyID: ak, SecretAccessKey: sk},
 		r,

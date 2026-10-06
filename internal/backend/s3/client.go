@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,12 @@ import (
 	"strings"
 
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/namespace"
 	"github.com/egose/s3proxy/internal/replaybody"
+	"github.com/egose/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/requestpayload"
+	"github.com/egose/s3proxy/internal/requestquery"
+	"github.com/egose/s3proxy/internal/s3op"
 	"github.com/egose/s3proxy/internal/s3ops"
 )
 
@@ -21,6 +27,7 @@ type Request struct {
 	Bucket    string
 	Key       string
 	Source    *http.Request
+	Namespace *namespace.Mapping
 }
 
 type Response struct {
@@ -40,7 +47,39 @@ func NewClient(httpClient *http.Client, targets map[string]config.S3Target, repl
 	if replayBudget == nil {
 		return nil, fmt.Errorf("replay budget is required")
 	}
-	return &client{httpClient: httpClient, targets: cloneTargets(targets), replayBudget: replayBudget}, nil
+	ownedClient := *httpClient
+	transport := ownedClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	ownedClient.Transport = redirectRejectingTransport{transport: transport}
+	ownedClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &client{httpClient: &ownedClient, targets: cloneTargets(targets), replayBudget: replayBudget}, nil
+}
+
+var errUpstreamRedirect = errors.New("upstream redirect rejected")
+
+type redirectRejectingTransport struct {
+	transport http.RoundTripper
+}
+
+func (t redirectRejectingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.transport.RoundTrip(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, errUpstreamRedirect
+	default:
+		return resp, nil
+	}
 }
 
 type client struct {
@@ -50,6 +89,26 @@ type client struct {
 }
 
 func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
+	if req.Source == nil || req.Source.URL == nil {
+		return nil, fmt.Errorf("outbound source request and URL are required")
+	}
+	query, err := requestquery.Parse(req.Source.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	if err := requestpayload.Validate(req.Source.Header); err != nil {
+		return nil, err
+	}
+	if err := s3op.ValidateOutboundShape(req.Operation, req.Source.Method, req.Bucket, req.Key); err != nil {
+		return nil, fmt.Errorf("invalid outbound request: %w", err)
+	}
+	op, err := s3ops.Classify(&requestctx.Context{
+		Method: req.Source.Method, Bucket: req.Bucket, Key: req.Key,
+		Query: query, Headers: req.Source.Header,
+	})
+	if err != nil || op != req.Operation || s3ops.IsMultipart(req.Source) {
+		return nil, fmt.Errorf("outbound request does not match operation")
+	}
 	target, err := c.target(req.Target)
 	if err != nil {
 		return nil, err
@@ -68,6 +127,18 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		cancelOnError()
 		return nil, fmt.Errorf("build target URL: %w", err)
+	}
+	mapping := req.Namespace
+	if req.Operation == s3ops.OpListObjectsV2 {
+		if mapping == nil {
+			mapping = &namespace.Mapping{VisibleBucket: req.Bucket}
+		}
+		query, err := mapping.Query(targetURL.Query())
+		if err != nil {
+			cancelOnError()
+			return nil, err
+		}
+		targetURL.RawQuery = query.Encode()
 	}
 
 	body, getBody, contentLength, err := c.prepareSourceBody(req.Source)
@@ -103,6 +174,9 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 		}
 	}
 	outReq.Header.Set("Host", targetURL.Host)
+	if req.Operation == s3ops.OpListObjectsV2 {
+		outReq.Header.Del("Accept-Encoding")
+	}
 
 	if err := signRequest(outReq, target); err != nil {
 		cancelOnError()
@@ -115,6 +189,30 @@ func (c *client) Do(ctx context.Context, req Request) (*Response, error) {
 		return nil, fmt.Errorf("upstream request failed: %w", sanitizeHTTPClientError(err))
 	}
 	respBody := resp.Body
+	if req.Operation == s3ops.OpListObjectsV2 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		data, err := mapping.Transform(ctx, respBody, req.Bucket, query)
+		cancelOnError()
+		if err != nil {
+			return nil, fmt.Errorf("transform listing: %w", err)
+		}
+		header := cloneHeader(resp.Header)
+		for name := range header {
+			lower := strings.ToLower(name)
+			switch lower {
+			case "content-length", "content-encoding", "transfer-encoding", "trailer",
+				"etag", "last-modified", "content-md5", "content-range", "accept-ranges",
+				"digest", "content-digest", "repr-digest", "x-amz-content-sha256":
+				header.Del(name)
+			default:
+				if strings.HasPrefix(lower, "x-amz-checksum-") {
+					header.Del(name)
+				}
+			}
+		}
+		header.Set("Content-Type", "application/xml")
+		header.Set("Content-Length", strconv.Itoa(len(data)))
+		return &Response{StatusCode: resp.StatusCode, Header: header, Body: io.NopCloser(bytes.NewReader(data))}, nil
+	}
 	if cancel != nil {
 		if respBody == nil {
 			cancel()
@@ -203,11 +301,14 @@ func (c *client) prepareSourceBody(src *http.Request) (io.ReadCloser, func() (io
 }
 
 func buildTargetURL(target config.S3Target, bucket, key string, src *http.Request) (*url.URL, error) {
+	query, err := requestquery.Parse(src.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
 	if target.EndpointURL == nil {
 		return nil, fmt.Errorf("target endpoint is not parsed")
 	}
 	base := cloneURL(target.EndpointURL)
-	var err error
 
 	var path string
 	var rawPath string
@@ -237,7 +338,7 @@ func buildTargetURL(target config.S3Target, bucket, key string, src *http.Reques
 		Host:     base.Host,
 		Path:     joinedPath,
 		RawPath:  joinedRawPath,
-		RawQuery: filteredQuery(src.URL.Query()).Encode(),
+		RawQuery: filteredQuery(query).Encode(),
 	}
 
 	if target.ForcePathStyle {
@@ -404,7 +505,7 @@ func joinURLPath(prefix, suffix string) string {
 	if suffix == "" || suffix == "/" {
 		return strings.TrimRight(prefix, "/")
 	}
-	return strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(suffix, "/")
+	return strings.TrimRight(prefix, "/") + "/" + strings.TrimPrefix(suffix, "/")
 }
 
 func filteredQuery(values url.Values) url.Values {

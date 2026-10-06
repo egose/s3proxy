@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,8 +18,11 @@ import (
 	"github.com/egose/s3proxy/internal/listbuckets"
 	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/requestctx"
+	"github.com/egose/s3proxy/internal/requestpayload"
+	"github.com/egose/s3proxy/internal/requestquery"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
+	"github.com/egose/s3proxy/internal/s3op"
 	"github.com/egose/s3proxy/internal/s3ops"
 	"github.com/egose/s3proxy/internal/xmls3"
 	"github.com/google/uuid"
@@ -91,12 +95,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		)
 	}()
 
-	if r.URL.Path == "/healthz" {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-		return
-	}
-	if r.URL.Path == "/readyz" {
+	if isLocalProbe(r, h.deps.Addressing) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 		return
@@ -105,11 +104,20 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, err := requestctx.FromRequest(r, h.deps.Addressing)
 	if err != nil {
 		logger.Error("request parse failed", "error", err)
+		if errors.Is(err, requestquery.ErrMalformed) {
+			xmls3.WriteError(w, http.StatusBadRequest, "InvalidRequest", "The request query is malformed.", requestID)
+			return
+		}
 		if requestctx.IsNoAddressingMatch(err) {
 			xmls3.WriteError(w, http.StatusBadRequest, "InvalidRequest", "The request does not match the enabled listener addressing modes.", requestID)
 			return
 		}
 		xmls3.WriteInternalError(w, requestID)
+		return
+	}
+
+	if err := requestpayload.Validate(r.Header); err != nil {
+		xmls3.WriteError(w, http.StatusNotImplemented, "NotImplemented", err.Error(), requestID)
 		return
 	}
 
@@ -124,7 +132,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principal   *auth.Principal
 		authChecked bool
 	)
-	if hasInboundAuth(r) {
+	if hasInboundAuth(r, ctx.Query) {
 		principal, err = h.deps.Authenticator.Authenticate(r)
 		authChecked = true
 		defer replaybody.Release(r)
@@ -194,6 +202,26 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	rewrites := make([]rewrite.Result, len(matches))
+	for i, match := range matches {
+		rwResult, err := h.deps.Rewriter.Apply(ctx, match.Route.Rewrite, match.Captures)
+		if err != nil {
+			logger.Error("rewrite failed", "route", match.Route.Name, "error", err)
+			if errors.Is(err, rewrite.ErrInvalidResult) {
+				xmls3.WriteError(w, http.StatusBadRequest, "InvalidRequest", "The rewrite or namespace query is invalid for the requested operation.", requestID)
+			} else {
+				xmls3.WriteInternalError(w, requestID)
+			}
+			return
+		}
+		if err := s3op.ValidateOutboundShape(op, r.Method, rwResult.Bucket, rwResult.Key); err != nil {
+			logger.Error("invalid rewrite result", "route", match.Route.Name, "error", err)
+			xmls3.WriteError(w, http.StatusBadRequest, "InvalidRequest", "The rewrite does not preserve the requested operation.", requestID)
+			return
+		}
+		rewrites[i] = rwResult
+	}
+
 	if len(matches) > 1 {
 		if h.deps.ReplayBudget == nil {
 			logger.Error("replay budget is not configured")
@@ -221,16 +249,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		rwResult, err := h.deps.Rewriter.Apply(ctx, match.Route.Rewrite, match.Captures)
-		if err != nil {
-			logger.Error("rewrite failed", "route", match.Route.Name, "error", err)
-			closeS3Response(r.Context(), logger, primary)
-			xmls3.WriteInternalError(w, requestID)
-			return
-		}
-
 		matchLogger := logger.With("route", match.Route.Name, "operation", op)
-		dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rwResult)
+		dispResult, err := h.deps.Dispatcher.Dispatch(r.Context(), match, r, op, rewrites[i])
 		logDestinationAttempts(logger, match.Route.Name, op, dispResult)
 		logCleanupErrors(logger, match.Route.Name, dispResult)
 		if err != nil {
@@ -240,9 +260,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if dispResult != nil && dispResult.Primary != nil && dispResult.Primary.StatusCode >= http.StatusBadRequest {
-				if err := writeS3Response(w, dispResult.Primary); err != nil {
-					matchLogger.Error("response copy failed", "error", safeLogError(err))
-				}
+				writeS3Response(w, dispResult.Primary, matchLogger)
 				return
 			}
 			if dispResult != nil {
@@ -255,9 +273,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if dispResult != nil && dispResult.Primary != nil {
 			if dispResult.Primary.StatusCode >= http.StatusBadRequest {
 				closeS3Response(r.Context(), logger, primary)
-				if err := writeS3Response(w, dispResult.Primary); err != nil {
-					matchLogger.Error("response copy failed", "error", safeLogError(err))
-				}
+				writeS3Response(w, dispResult.Primary, matchLogger)
 				return
 			}
 			if primary == nil {
@@ -278,13 +294,27 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if primary != nil {
-		if err := writeS3Response(w, primary); err != nil {
-			logger.Error("response copy failed", "error", safeLogError(err))
-		}
+		writeS3Response(w, primary, logger)
 		return
 	}
 
 	xmls3.WriteInternalError(w, requestID)
+}
+
+func isLocalProbe(r *http.Request, addressing config.Addressing) bool {
+	if r.Method != http.MethodGet || r.URL.RawQuery != "" || r.URL.ForceQuery {
+		return false
+	}
+	path := r.URL.EscapedPath()
+	if path != "/healthz" && path != "/readyz" {
+		return false
+	}
+	for name := range r.Header {
+		if strings.EqualFold(name, "Authorization") {
+			return false
+		}
+	}
+	return requestctx.VirtualBucket(r.Host, addressing) == ""
 }
 
 func (h *handler) handleListBuckets(w http.ResponseWriter, principal *auth.Principal, requestID string, logger *slog.Logger) {
@@ -323,7 +353,14 @@ func writeReplayError(w http.ResponseWriter, err error, requestID string) bool {
 	return false
 }
 
-func writeS3Response(w http.ResponseWriter, resp *s3.Response) error {
+func writeS3Response(w http.ResponseWriter, resp *s3.Response, logger *slog.Logger) {
+	if resp.Body != nil {
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logger.Warn("response cleanup failed", "error", safeLogError(err))
+			}
+		}()
+	}
 	connectionTokens := connectionHeaderTokens(resp.Header)
 	for key, vals := range resp.Header {
 		if isHopByHopHeader(key, connectionTokens) {
@@ -335,16 +372,11 @@ func writeS3Response(w http.ResponseWriter, resp *s3.Response) error {
 	}
 	w.WriteHeader(resp.StatusCode)
 	if resp.Body != nil {
-		_, copyErr := io.Copy(w, resp.Body)
-		closeErr := resp.Body.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			logger.Error("response copy failed", "error", safeLogError(err))
+			panic(http.ErrAbortHandler)
 		}
 	}
-	return nil
 }
 
 type statusRecorder struct {
@@ -462,14 +494,14 @@ func connectionHeaderTokens(headers http.Header) map[string]struct{} {
 	return tokens
 }
 
-func hasInboundAuth(r *http.Request) bool {
+func hasInboundAuth(r *http.Request, query url.Values) bool {
 	if r == nil {
 		return false
 	}
 	if r.Header.Get("Authorization") != "" {
 		return true
 	}
-	for key := range r.URL.Query() {
+	for key := range query {
 		switch strings.ToLower(key) {
 		case "x-amz-algorithm", "x-amz-credential", "x-amz-date", "x-amz-expires",
 			"x-amz-security-token", "x-amz-signature", "x-amz-signedheaders":

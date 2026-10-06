@@ -25,6 +25,6 @@ func signRequest(req *http.Request, target config.S3Target) error {
 		req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
 	}
 
-	signer := v4.NewSigner()
+	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
 	return signer.SignHTTP(context.Background(), creds, req, unsignedPayload, s3ServiceName, target.Region, time.Now().UTC())
 }

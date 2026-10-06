@@ -224,17 +224,16 @@ func TestClientDo_SanitizesTransportURLInErrors(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("dial tcp connection refused")
 	})}
-	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/bucket/key?token=sentinel-query-value", nil)
+	src, err := http.NewRequest(http.MethodGet, "http://proxy.local/bucket?list-type=2&prefix=secret-object&continuation-token=sentinel-query-value", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	client := newTestClient(t, httpClient, testTargets(t, "http://user:pass@upstream.local"), testBudget())
 	_, err = client.Do(context.Background(), Request{
-		Operation: s3ops.OpGetObject,
+		Operation: s3ops.OpListObjectsV2,
 		Target:    "primary",
 		Bucket:    "private-bucket",
-		Key:       "secret-object",
 		Source:    src,
 	})
 	if err == nil {

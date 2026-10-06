@@ -1,5 +1,11 @@
 package s3op
 
+import (
+	"fmt"
+	"net/http"
+	"strings"
+)
+
 type Operation string
 
 const (
@@ -53,4 +59,38 @@ func IsConfigurable(op string) bool {
 
 func ConfigurableOperations() []Operation {
 	return []Operation{GetObject, HeadObject, PutObject, DeleteObject, HeadBucket, ListObjectsV2, ListBuckets}
+}
+
+func ValidateOutboundShape(op Operation, method, bucket, key string) error {
+	var wantMethod string
+	var object bool
+	switch op {
+	case GetObject:
+		wantMethod, object = http.MethodGet, true
+	case HeadObject:
+		wantMethod, object = http.MethodHead, true
+	case PutObject:
+		wantMethod, object = http.MethodPut, true
+	case DeleteObject:
+		wantMethod, object = http.MethodDelete, true
+	case HeadBucket:
+		wantMethod = http.MethodHead
+	case ListObjectsV2:
+		wantMethod = http.MethodGet
+	default:
+		return fmt.Errorf("operation is not supported for outbound execution")
+	}
+	if method != wantMethod {
+		return fmt.Errorf("method does not match operation")
+	}
+	if bucket == "" || strings.ContainsAny(bucket, "/\\%?#") {
+		return fmt.Errorf("operation requires a nonempty bucket without path or URL delimiters")
+	}
+	if object && key == "" {
+		return fmt.Errorf("object operation requires a nonempty key")
+	}
+	if !object && key != "" {
+		return fmt.Errorf("bucket operation requires an empty key")
+	}
+	return nil
 }

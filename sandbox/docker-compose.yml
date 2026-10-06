@@ -6,7 +6,6 @@ x-common-props: &common-props
 services:
   minio:
     <<: *common-props
-    container_name: s3proxy_minio
     image: minio/minio:RELEASE.2025-02-07T23-21-09Z@sha256:640c22768ed5dbc92eacc14502a1b06a1c708fa60431345c78dfc22917062e93
     ports:
     - 127.0.0.1:9000:9000
@@ -51,7 +50,6 @@ services:
 
   seaweedfs:
     <<: *common-props
-    container_name: s3proxy_seaweedfs
     hostname: seaweedfs
     image: chrislusf/seaweedfs:4.39@sha256:c7d6c721b30ae711db766bbbfd40192776e263d4e51e22f57baef7bef93c12c6
     # `-s3.config=/etc/seaweedfs/s3.json` enables SeaweedFS S3 identity-based
@@ -103,7 +101,6 @@ services:
 
   azurite:
     <<: *common-props
-    container_name: s3proxy_azurite
     # See https://github.com/Azure/Azurite/tags
     image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
     restart: always
@@ -120,7 +117,6 @@ services:
   # See https://hub.docker.com/r/fsouza/fake-gcs-server/tags
   fake-gcs-server:
     <<: *common-props
-    container_name: s3proxy_fake_gcs_server
     image: fsouza/fake-gcs-server:1.54.0@sha256:3730da0e31f7e5186a90ec4899dc2c336104e7599df400411392ef17e684c31f
     restart: always
     ports:
@@ -140,7 +136,6 @@ services:
 
   s3-error:
     <<: *common-props
-    container_name: s3proxy_s3_error
     image: python:3.13-alpine@sha256:540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d
     restart: always
     ports:

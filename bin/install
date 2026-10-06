@@ -12,6 +12,8 @@ if [ "$install_type" != "version" ]; then
   exit 1
 fi
 
+trap 'if [ "$?" -ne 0 ]; then echo "Error: Installation failed." >&2; fi' EXIT
+
 (
   shopt -s nullglob
   archives=("$download_path"/*.tar.gz)
@@ -29,24 +31,28 @@ fi
     exit 1
   fi
   case "$entries" in /*|*../*) echo "Unsafe archive path: $entries" >&2; exit 1 ;; esac
-  test "$(tar -tvzf "${archives[0]}" | cut -c1)" = "-" || { echo "Release binary is not a regular file." >&2; exit 1; }
+  entry_types=$(tar -tvzf "${archives[0]}" | cut -c1)
+  test "$entry_types" = "-" || { echo "Release binary is not a regular file." >&2; exit 1; }
 
   parent=$(dirname "$install_path")
   mkdir -p "$parent"
-  stage=$(mktemp -d "$parent/.${tool_name}.install.XXXXXX")
+  mkdir -p "$install_path"
+  stage=$(mktemp -d "$install_path/.${tool_name}.install.XXXXXX")
   trap 'rm -rf "$stage"' EXIT
   mkdir "$stage/bin"
   tar -xzf "${archives[0]}" --no-same-owner --no-same-permissions -C "$stage/bin"
-  test -f "$stage/bin/$entries" && test ! -L "$stage/bin/$entries"
+  if [ ! -f "$stage/bin/$entries" ] || [ -L "$stage/bin/$entries" ]; then
+    echo "Extracted release binary is missing or not a regular file." >&2
+    exit 1
+  fi
   chmod 0755 "$stage/bin/$entries"
-  mkdir -p "$install_path"
-  test ! -e "$install_path/bin" || { echo "Install path already contains bin/" >&2; exit 1; }
+  if [ -e "$install_path/bin" ] || [ -L "$install_path/bin" ]; then
+    echo "Install path already contains bin/" >&2
+    exit 1
+  fi
   mv "$stage/bin" "$install_path/bin"
   rmdir "$stage"
   trap - EXIT
 
   echo "$tool_name v$version installation was successful!"
-) || {
-  echo "Error: Installation failed." >&2
-  exit 1
-}
+)
