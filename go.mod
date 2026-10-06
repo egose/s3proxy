@@ -1,6 +1,6 @@
 module github.com/egose/s3proxy
 
-go 1.26
+go 1.27
 
 require (
 	github.com/agext/levenshtein v1.2.1 // indirect

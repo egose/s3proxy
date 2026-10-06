@@ -21,7 +21,7 @@ auth "main" {
   }
 }
 
-// Backends: MinIO is the primary, SeaweedFS is the replica.
+// Backends: separate SeaweedFS instances back primary and replica.
 // Each target's credentials are independent.
 
 credential "static" "primary" {
@@ -75,7 +75,7 @@ target "s3" "error500" {
   credentials      = "primary"
 }
 
-// Route /primary/* to MinIO only. Validates single-destination forwarding
+// Route /primary/* to primary only. Validates single-destination forwarding
 // against a real S3 backend.
 
 parser "path_prefix" "primary_prefix" {

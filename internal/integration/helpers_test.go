@@ -1,7 +1,7 @@
 //go:build integration
 
 // Package integration hosts end-to-end tests that exercise the running s3proxy
-// against the sandbox docker-compose stack (MinIO + SeaweedFS). The tests are
+// against the sandbox docker-compose stack (SeaweedFS primary + SeaweedFS replica). The tests are
 // gated by the `integration` build tag so they are not picked up by `go test`
 // or `make test` unless explicitly requested via `-tags integration`.
 //
