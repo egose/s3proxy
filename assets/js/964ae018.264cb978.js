@@ -54,12 +54,20 @@ const toc = [{
   "id": "authentication-modes",
   "level": 2
 }, {
+  "value": "Request Payload Formats",
+  "id": "request-payload-formats",
+  "level": 2
+}, {
   "value": "Request Classification",
   "id": "request-classification",
   "level": 2
 }, {
   "value": "Routing-Specific Behavior",
   "id": "routing-specific-behavior",
+  "level": 2
+}, {
+  "value": "Streaming Responses",
+  "id": "streaming-responses",
   "level": 2
 }, {
   "value": "<code>ListBuckets</code>",
@@ -82,6 +90,10 @@ const toc = [{
   "id": "outbound-signing",
   "level": 2
 }, {
+  "value": "Upstream Redirects",
+  "id": "upstream-redirects",
+  "level": 3
+}, {
   "value": "Error Behavior",
   "id": "error-behavior",
   "level": 2
@@ -92,12 +104,15 @@ const toc = [{
 }];
 function _createMdxContent(props) {
   const _components = {
+    a: "a",
     code: "code",
     h1: "h1",
     h2: "h2",
+    h3: "h3",
     header: "header",
     li: "li",
     p: "p",
+    strong: "strong",
     table: "table",
     tbody: "tbody",
     td: "td",
@@ -249,9 +264,27 @@ function _createMdxContent(props) {
       id: "supported-query-keys",
       children: "Supported Query Keys"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["The v1 API fails closed at request classification. A request with a query key outside the supported operation contract returns ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "NotImplemented"
-      }), " before route dispatch."]
+      children: ["The v1 API rejects malformed query strings with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), " before authentication, request-body reads, or route dispatch. Invalid/truncated percent escapes in names or values and unescaped semicolons are malformed; the proxy never executes the successfully decoded subset of such a query. Error responses and logs do not include raw query values or parser excerpts."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Well-formed queries with keys outside the supported operation contract return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "501 NotImplemented"
+      }), " before route dispatch, subject to normal authentication checks. For example, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?versionId=%GG"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?tagging=;value"
+      }), " return 400, while ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?versionId=value"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?tagging=%3Bvalue"
+      }), " are well-formed unsupported selectors and return 501. Encoded punctuation (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%3B"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%25"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2B"
+      }), "), spaces, Unicode, and opaque continuation tokens retain normal query-decoding behavior. Existing operation-specific duplicate-key rules still apply."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Inbound SigV4 presign query keys are accepted for authentication and are not forwarded to backends: ", (0,jsx_runtime.jsx)(_components.code, {
         children: "X-Amz-Algorithm"
@@ -389,11 +422,68 @@ function _createMdxContent(props) {
         children: "sigv4_static"
       }), ", the proxy verifies the inbound S3 SigV4 signature against statically configured clients."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Header signatures, presigned URLs, and outbound signatures use S3 canonical URI rules, preserving the escaped path without double escaping or path normalization. Spaces, percent characters, Unicode, and escaped separators in keys are supported. This corrects the previous generic-signer behavior: custom clients using the standalone AWS SDK v2 signer must set ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "DisableURIPathEscaping = true"
+      }), ". Signatures that double-escape the path are rejected."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Header-signed requests must sign ", (0,jsx_runtime.jsx)(_components.code, {
         children: "x-amz-date"
       }), " and be within 15 minutes of the proxy clock. Presigned URLs may expire at most seven days after signing. Payload hashes may be omitted, use ", (0,jsx_runtime.jsx)(_components.code, {
         children: "UNSIGNED-PAYLOAD"
-      }), ", or contain a 64-character hexadecimal SHA-256 digest. Streaming SigV4 payload sentinels are not supported in v1."]
+      }), ", or contain a 64-character hexadecimal SHA-256 digest. Unsupported streaming formats are rejected as described below."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "request-payload-formats",
+      children: "Request Payload Formats"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Use ordinary single-request ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "PutObject"
+      }), " uploads. The proxy does not decode AWS streaming envelopes, verify per-chunk signatures, or process S3 checksum trailers. Requests declaring any of the following return S3 ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "501 NotImplemented"
+      }), ":"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["a comma-separated ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Content-Encoding"
+        }), " token equal to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "aws-chunked"
+        }), " (case-insensitive, with surrounding whitespace ignored)"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["an ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "X-Amz-Content-Sha256"
+        }), " value starting with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "STREAMING-"
+        }), " (case-insensitive, with surrounding whitespace ignored), including signed-payload and unsigned-trailer sentinels"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["a nonempty ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "X-Amz-Trailer"
+        }), " value after trimming surrounding whitespace"]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Header names are case-insensitive and every repeated value is checked. Encoding matching is by whole token, not substring: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "not-aws-chunked"
+      }), " does not trigger this boundary. The guard only inspects metadata; it neither reads nor rewrites the object body or request headers."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["This format rejection occurs after strict query validation and before authentication, payload-hash verification, replay buffering, routing, or backend I/O, in both ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "none"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "sigv4_static"
+      }), " modes (header signatures and presigned URLs). ", (0,jsx_runtime.jsxs)(_components.strong, {
+        children: ["This changes streaming hash sentinels from their former authentication failure to consistent ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "501 NotImplemented"
+        }), "."]
+      }), " Malformed queries still return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), " first. Eligible local health probes retain their existing behavior. Errors and logs do not echo the rejected marker values."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Ordinary HTTP ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Transfer-Encoding: chunked"
+      }), ", gzip-encoded object bytes with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Content-Encoding: gzip"
+      }), ", regular checksum headers, and opaque bytes that resemble AWS chunks are not rejected by this boundary. Ordinary authentication, operation, and replay limits still apply, including ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "413 EntityTooLarge"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "503 SlowDown"
+      }), " where buffering is required. A regular checksum header is distinct from requesting unsupported trailer processing; this boundary does not itself validate checksum values."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "request-classification",
       children: "Request Classification"
@@ -449,6 +539,17 @@ function _createMdxContent(props) {
         }), " chooses the effective backend for reads when multiple destinations are configured"]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "streaming-responses",
+      children: "Streaming Responses"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Object downloads stream from the selected backend. If copying a response fails,\nthe proxy aborts the transfer: clients receive a request or body-read error\nrather than normal completion, including for unknown-length bodies. Headers\nalready received may still show ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "200 OK"
+      }), "; clients must read the entire body\nsuccessfully before treating the download as complete. The proxy never appends\nan XML error to an interrupted object body."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The same transfer-failure behavior applies when forwarding upstream error XML\nor transformed listing XML. A body-close error after a complete copy is logged\nas a cleanup failure and does not interrupt successful delivery. Completion\nlogs retain the committed status and bytes accepted by the response writer;\ncheck for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "response copy failed"
+      }), " to identify aborted transfers."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "listbuckets",
       children: (0,jsx_runtime.jsx)(_components.code, {
         children: "ListBuckets"
@@ -476,6 +577,57 @@ function _createMdxContent(props) {
       }), " is forwarded to one selected backend."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "The proxy does not merge listing results or pagination tokens across multiple backends in v1."
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Bucket-only rewrites, prepend prefixes, and prefix-only templates translate\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefix"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "start-after"
+      }), " to the backend namespace. XML ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Name"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Prefix"
+      }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "StartAfter"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Contents.Key"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "CommonPrefixes.Prefix"
+      }), " are translated back.\nSee ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/configuration#rewrites",
+        children: "rewrite validation"
+      }), " for the exact supported\ntemplate syntax; strip-key/strip-path rules are unsupported for listings."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "encoding-type=url"
+      }), " is supported. Query parameters contain S3 key values after\nnormal query decoding; XML key fields are percent-decoded once, translated, and\npercent-encoded again. Encoded XML uses ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "+"
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%20"
+      }), " for space and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2B"
+      }), " for a\nliteral plus; output uses ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%20"
+      }), " for spaces. Raw path prefixes still treat ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "+"
+      }), "\nliterally. Keys returned by a client SDK can be used with GetObject through the same mapping.\nUse normal path escaping when constructing raw HTTP requests."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Known query echoes (Prefix/StartAfter/Delimiter) are also accepted when exactly\nequal to the unencoded request value, as emitted by SeaweedFS; they are encoded\nconsistently in the client response. Returned keys/common prefixes must follow\nthe declared encoding."
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Continuation tokens are opaque: the proxy preserves their values without\nnamespace translation or URL decoding inside XML. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "random"
+      }), " selection or\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ordered_failover"
+      }), " can switch backends between pages, so tokens can be rejected\nor pages inconsistent. Choose a fixed backend for stable pagination; no cursor\naffinity or merged listing is provided. Hash-selected bucket listings are stable\nfor unchanged destinations, but object reads can hash to another replica."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Successful XML transformation is bounded to 8 MiB input/output, 50,000 elements,\nfour element levels, and five seconds, with earlier request/target cancellation\ntaking precedence. Bodies close on every exit. Malformed XML, unsupported XML\nstructure, encoding mismatches, oversized responses, or keys outside the\nrequested namespace return HTTP ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "502"
+      }), " with S3 ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "InternalError"
+      }), " without partial results. An object\nequal to the hidden namespace prefix has no nonempty visible key and is also\nrejected. Transformed XML gets fresh framing and integrity headers are removed;\nobject downloads continue to stream. Standard V2 owner/checksum/restore metadata\nis preserved, while unknown XML extensions fail closed."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "HeadBucket"
+      }), " always addresses the rewritten bucket root, ignoring object key\nrules. It checks the backend bucket, not whether the namespace prefix exists."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "failover-rules",
       children: "Failover Rules"
@@ -567,6 +719,33 @@ function _createMdxContent(props) {
       }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
         children: "Content-Length"
       }), " must be set before signing."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "upstream-redirects",
+      children: "Upstream Redirects"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Upstream ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "301"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "302"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "303"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "307"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "308"
+      }), " responses are rejected for every\noperation, including object reads, uploads, deletes and listings. The proxy\ndoes not follow the redirect or forward its ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Location"
+      }), " or response body. The\nfailure uses HTTP ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "502"
+      }), " with S3 ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "InternalError"
+      }), " through ordinary proxy error\nhandling. Configured ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ordered_failover"
+      }), " may instead succeed at the next\nconfigured destination; fan-out preserves an available primary non-redirect\nHTTP error response under its normal rules."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Configure the correct backend endpoint and region. Redirect-based region\ndiscovery is unsupported. Redirect URL credentials, object paths and query\nvalues are excluded from errors and logs. Conditional ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "304 Not Modified"
+      }), " and\nordinary upstream HTTP error responses are unaffected."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "error-behavior",
       children: "Error Behavior"
@@ -590,13 +769,35 @@ function _createMdxContent(props) {
       id: "health-endpoints",
       children: "Health Endpoints"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: [(0,jsx_runtime.jsx)(_components.code, {
+      children: ["Local probes on the main S3 listener return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "200 OK"
+      }), " with body ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ok"
+      }), " only for ", (0,jsx_runtime.jsx)(_components.strong, {
+        children: "GET"
+      }), " requests with the exact escaped path ", (0,jsx_runtime.jsx)(_components.code, {
         children: "/healthz"
-      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
         children: "/readyz"
-      }), " are unauthenticated, method-agnostic process endpoints on the main S3 listener. Restrict them at the network or reverse-proxy layer if the listener is public. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), ", no ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Authorization"
+      }), " header (even an empty one), no query string (including a bare ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?"
+      }), "), and a host that is not a configured virtual bucket host. Ordinary localhost, IP, and base-host probes work even on virtual-host-only listeners. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "/readyz"
       }), " means the proxy process is serving requests; it does not poll configured backends or report destination health."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["All other requests follow the normal S3 parsing, authentication, authorization, and operation handling. This includes HEAD, signed or presigned requests, query-bearing requests, encoded spellings such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/%68ealthz"
+      }), ", and requests to configured virtual bucket hosts. These paths can therefore be object keys on virtual bucket hosts, or path-style bucket names for ListObjectsV2 and HEAD. Malformed probe-path queries (for example, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/healthz?prefix=%GG"
+      }), ") return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), ". Unsupported operations retain their normal S3 errors; there is no probe-specific 405 response."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The indistinguishable unsigned, exact, query-free base-host GET shape is reserved for probes. Virtual bucket recognition uses the listener's enabled virtual-host addressing and ordered ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "host_suffixes"
+      }), ", including case, port, and trailing-dot normalization. Unconfigured host aliases cannot be inferred to be bucket hosts and may receive the local probe response. Configure probe hosts accordingly. Restrict probe access at the network or reverse-proxy layer if the listener is public. This GET-only contract replaces the former method-agnostic behavior; signed requests are no longer probes."]
     })]
   });
 }

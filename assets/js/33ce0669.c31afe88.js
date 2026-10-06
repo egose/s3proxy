@@ -84,6 +84,7 @@ const toc = [{
 }];
 function _createMdxContent(props) {
   const _components = {
+    a: "a",
     code: "code",
     h1: "h1",
     h2: "h2",
@@ -209,6 +210,11 @@ function _createMdxContent(props) {
       children: ["In v1, ", (0,jsx_runtime.jsx)(_components.code, {
         children: "ListObjectsV2"
       }), " always comes from one effective backend. The proxy does not merge pagination across multiple destinations."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["List filters and keys use the visible namespace for supported prefix rewrites.\nPass SDK-returned keys directly to GetObject; for raw HTTP, apply normal path\nescaping. Continuation tokens are opaque and must be passed unchanged to the\nnext request. Use a fixed backend for stable pages: random selection or failover\ncan change the backend and invalidate its token. See the ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/api-reference#listobjectsv2",
+        children: "listing contract"
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "head-a-bucket",
       children: "Head A Bucket"
@@ -241,6 +247,19 @@ function _createMdxContent(props) {
         children: "CopyObject"
       }), " is also rejected."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["AWS streaming upload envelopes are also unsupported. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Content-Encoding: aws-chunked"
+      }), ", a ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "STREAMING-"
+      }), " payload hash, or a nonempty ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Trailer"
+      }), " declaration returns ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "501 NotImplemented"
+      }), " before authentication or body reads. Streaming hash sentinels previously failed authentication; they now receive this format-specific 501. Use a client/request mode that sends ordinary single-request object bytes, and inspect the actual request metadata when diagnosing a 501. Do not remove framing headers while retaining an encoded AWS envelope. Ordinary HTTP transfer chunking and gzip-encoded objects remain supported; see ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/api-reference#request-payload-formats",
+        children: "request payload formats"
+      }), " for exact detection and precedence."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["S3 subresource query operations are rejected before route dispatch unless they are part of the documented supported query surface. Examples include ", (0,jsx_runtime.jsx)(_components.code, {
         children: "?acl"
       }), ", ", (0,jsx_runtime.jsx)(_components.code, {
@@ -261,9 +280,23 @@ function _createMdxContent(props) {
         children: "?uploadId=..."
       }), "."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Well-formed unsupported queries return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "501 NotImplemented"
+      }), " after applicable authentication checks. Malformed query strings, such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?versionId=%GG"
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?tagging=;value"
+      }), ", instead return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), " before authentication or request-body reads. Encode literal semicolons as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%3B"
+      }), " and literal percent signs as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%25"
+      }), "; valid encoding does not enable unsupported operations."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The proxy returns an S3-compatible ", (0,jsx_runtime.jsx)(_components.code, {
         children: "NotImplemented"
-      }), " error for those requests instead of attempting partial support."]
+      }), " error for well-formed unsupported operations instead of attempting partial support."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "behavior-notes",
       children: "Behavior Notes"

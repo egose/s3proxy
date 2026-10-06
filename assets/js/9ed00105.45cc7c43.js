@@ -50,6 +50,10 @@ const toc = [{
   "id": "listener",
   "level": 2
 }, {
+  "value": "Listener Address Validation",
+  "id": "listener-address-validation",
+  "level": 3
+}, {
   "value": "Auth",
   "id": "auth",
   "level": 2
@@ -88,9 +92,11 @@ const toc = [{
 }];
 function _createMdxContent(props) {
   const _components = {
+    a: "a",
     code: "code",
     h1: "h1",
     h2: "h2",
+    h3: "h3",
     header: "header",
     li: "li",
     ol: "ol",
@@ -183,7 +189,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n  replay_body_max_bytes = 33554432\n  replay_body_aggregate_max_bytes = 268435456\n\n  addressing {\n    path_style     = true\n    virtual_hosted = true\n    host_suffixes  = [\"s3proxy.example.com\"]\n  }\n\n  timeouts {\n    read_header = \"10s\"\n    idle        = \"60s\"\n    write       = \"0s\"\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"ci\" {\n    access_key      = env(\"S3PROXY_CLIENT_CI_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_CI_SECRET_KEY\")\n    allow_routes    = [\"route.images_rw\"]\n    visible_buckets = [\"images\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"https://minio-a.internal\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  timeout          = \"5s\"\n  credentials      = \"primary\"\n}\n\nparser \"path_prefix\" \"images\" {\n  prefix = \"/images\"\n}\n\nroute \"images_rw\" {\n  parser          = \"images\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix  = \"/images\"\n    prepend_key_prefix = \"assets/\"\n    bucket             = \"images-store\"\n  }\n}\n\nbucket \"images\" {\n  visible_name = \"images\"\n  route        = \"images_rw\"\n}\n"
+        children: "listener \"http\" \"public\" {\n  address = \":8080\"\n  replay_body_max_bytes = 33554432\n  replay_body_aggregate_max_bytes = 268435456\n\n  addressing {\n    path_style     = true\n    virtual_hosted = true\n    host_suffixes  = [\"s3proxy.example.com\"]\n  }\n\n  timeouts {\n    read_header = \"10s\"\n    idle        = \"60s\"\n    write       = \"0s\"\n  }\n}\n\nauth \"main\" {\n  mode = \"sigv4_static\"\n\n  client \"ci\" {\n    access_key      = env(\"S3PROXY_CLIENT_CI_ACCESS_KEY\")\n    secret_key      = env(\"S3PROXY_CLIENT_CI_SECRET_KEY\")\n    allow_routes    = [\"route.images_rw\"]\n    visible_buckets = [\"images\"]\n  }\n}\n\ncredential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n\ntarget \"s3\" \"primary\" {\n  endpoint         = \"https://minio-a.internal\"\n  region           = \"us-east-1\"\n  force_path_style = true\n  timeout          = \"5s\"\n  credentials      = \"primary\"\n}\n\nparser \"path_prefix\" \"images\" {\n  prefix = \"/images\"\n}\n\nroute \"images_rw\" {\n  parser          = \"images\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    prepend_key_prefix = \"assets/\"\n    bucket             = \"images-store\"\n  }\n}\n\nbucket \"images\" {\n  visible_name = \"images\"\n  route        = \"images_rw\"\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "listener",
@@ -312,6 +318,91 @@ function _createMdxContent(props) {
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Replay buffering is used for fan-out writes, writes matched by multiple routes, inbound SigV4 requests with a concrete payload hash, and outbound requests whose body length is unknown."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "listener-address-validation",
+      children: "Listener Address Validation"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "address"
+      }), " must be a nonempty TCP ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "host:port"
+      }), " string, not a URL. Configuration\nloading (including ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "validate"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "routes"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "serve"
+      }), ") checks Go's host/port\nseparator and bracket structure and rejects numeric ports outside ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "0"
+      }), "–", (0,jsx_runtime.jsx)(_components.code, {
+        children: "65535"
+      }), ".\nFor example, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "127.0.0.1"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "http://127.0.0.1:8080"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ":65536"
+      }), " now fail during\nconfiguration validation rather than later at startup. Errors identify the\nlistener label and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "address"
+      }), " field without echoing the address or parser excerpts."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Accepted offline forms include:"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["wildcard hosts: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: ":8080"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0.0.0.0:8080"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "[::]:8080"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["IPv4 and hostnames: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "127.0.0.1:8080"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "gateway.example.com:8080"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["bracketed IPv6, including zones: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "[::1]:8080"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "[fe80::1%eth0]:8080"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["named service ports: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "localhost:http"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: ":https"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["ephemeral ports: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "127.0.0.1:0"
+        }), " or an empty port such as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "127.0.0.1:"
+        }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: ":"
+        })]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Numeric ports are decimal; leading zeros and an optional sign retain Go's\nbehavior (", (0,jsx_runtime.jsx)(_components.code, {
+        children: ":+8080"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ":00080"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ":-0"
+      }), " are accepted). Go also treats a bare ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "+"
+      }), "\nor ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "-"
+      }), " port as zero. Negative nonzero numeric ports are rejected. Nonnumeric\nservice names are left for runtime resolution; validation does not check that\nthe service exists. Go stops parsing sufficiently large numeric prefixes before\nreaching any service suffix; those overflow forms (such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ":10737418240service"
+      }), ")\nare also rejected offline."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["This is an offline syntax gate, not a bind-availability check or a DNS naming\npolicy. Hostname/service resolution, IPv6 zone/interface existence, local address\nownership, bind permissions, and port availability are checked at runtime.\nSyntactically valid unavailable addresses and occupied ports still pass\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "validate"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "routes"
+      }), "; neither command binds a listener or contacts backends."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "auth",
       children: "Auth"
@@ -681,7 +772,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "rewrite {\n  strip_path_prefix  = \"/images\"\n  prepend_key_prefix = \"assets/\"\n  bucket             = \"images-store\"\n  key_template       = \"{{ .Captures.tenant }}/{{ .Key }}\"\n}\n"
+        children: "rewrite {\n  prepend_key_prefix = \"assets/\"\n  bucket             = \"images-store\"\n  key_template       = \"{{ .Captures.tenant }}/{{ .Key }}\"\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Template data uses the names ", (0,jsx_runtime.jsx)(_components.code, {
@@ -692,13 +783,38 @@ function _createMdxContent(props) {
         children: "Captures"
       }), "."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Key rewrites apply to the URL path. They do not rewrite ", (0,jsx_runtime.jsx)(_components.code, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "HeadBucket"
+      }), " applies only ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "bucket"
+      }), " and targets the backend bucket root. It does\nnot check whether a virtual prefix exists."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "ListObjectsV2"
-      }), " query parameters such as ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "prefix"
-      }), ". Do not combine ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "ListObjectsV2"
-      }), " with a rewrite that turns its empty key into a non-empty path unless the backend intentionally supports that request shape."]
+      }), " supports bucket-only rewrites, prepend prefixes, and prefix-only\ntemplates made of literals, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".Bucket"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".Captures.name"
+      }), ", followed by exactly\none terminal ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "{{ .Key }}"
+      }), ". These prefixes may be combined; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".Bucket"
+      }), " is the\nrewritten bucket. Template functions, pipelines, control flow, additional definitions/calls,\nvariables, repeated/nonterminal keys, and all strip-key/strip-path combinations\nare rejected at startup on listing routes. Path-style parsing already removes\nthe visible bucket segment, so redundant stripping should be removed."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Configured prefixes use raw path notation with valid percent escapes: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%25"
+      }), "\nmeans a literal percent, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2F"
+      }), " a slash, and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%252F"
+      }), " literal ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2F"
+      }), " key text. Missing\ncaptures or invalid runtime prefix escapes return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), " before\ndispatch. Object-only routes can still use general templates and strip rules.\nQuery/XML keys use S3 key values instead of raw paths; list filters and results\nare translated into the visible namespace. See ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/api-reference#listobjectsv2",
+        children: "the listing contract"
+      }), "\nfor encoding, bounds, and pagination limitations."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "virtual-buckets",
       children: "Virtual Buckets"
@@ -729,13 +845,39 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Use ", (0,jsx_runtime.jsx)(_components.code, {
         children: "env(\"VAR\")"
-      }), " anywhere a string is allowed. The value is textually inlined before HCL parsing."]
+      }), " anywhere a string is allowed. This native HCL function returns\nthe environment value as a literal string during evaluation. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "${...}"
+      }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%{...}"
+      }), ", quotes, newlines, backslashes, and Unicode in the value are data;\nthey are never parsed as HCL source or templates."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Ordinary function-call whitespace works, including ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "env ( \"VAR\" )"
+      }), ". Comments\nand literal strings containing ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "env(...)"
+      }), " text are not evaluated. HCL source\ncan explicitly interpolate a call, such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "\"prefix-${env(\"VAR\")}\""
+      }), "; the\nreturned value is still literal and is not evaluated again. Field-specific\nprocessing still applies, such as URL parsing for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "endpoint"
+      }), " and Go template\ncompilation for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "key_template"
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "An unset variable is replaced with an empty string. There is no separate missing-variable diagnostic; required-field validation may reject the resulting value, while optional string fields may remain empty."
+      children: "An unset variable returns an empty string. There is no separate missing-variable diagnostic; required-field validation may reject the resulting value, while optional string fields may remain empty."
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "The loader parses the original file bytes, so parse/decode diagnostics retain\nthe original filename, line, and column, including leading blank lines."
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Every ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "env()"
+      }), " result is treated as sensitive in diagnostics, not just credential\nvalues. HCL errors in expressions that call ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "env()"
+      }), " retain their category,\nblock/field identity, and original location, but withhold value-bearing details.\nThis includes explicit interpolation, nested calls, and collection expressions.\nDuplicate-object-key errors also withhold the evaluated key for literal\nexpressions, while retaining the uniqueness cause and block/field location.\nOther ordinary HCL errors for public expressions retain their detailed explanations."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Compilation and validation errors omit attribute values for both environment\nand literal inputs. They report the affected block/field and a safe cause, such\nas invalid URL escape, expected duration syntax, invalid regex capture name,\nunknown template function, unknown reference, or allowed enum choices. URL,\nduration, regex, and template compilation errors include the original expression\nlocation. The CLI uses the same diagnostics and exits unsuccessfully for invalid\nconfiguration. Config filenames and literal block labels remain visible; keep\nsecrets in values rather than in those identifiers. This diagnostic policy does\nnot alter successfully loaded values or skip field validation."
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["For local runs, load ", (0,jsx_runtime.jsx)(_components.code, {
         children: ".env"
-      }), " before invoking the proxy if needed:"]
+      }), " before invoking the proxy if needed; the CLI does\nnot load it automatically:"]
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
@@ -769,6 +911,10 @@ function _createMdxContent(props) {
         children: "routes that reference unknown parsers or destinations"
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "invalid operation names or read preferences"
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["non-reversible rewrites on routes supporting ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ListObjectsV2"
+        })]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "duplicate route operations or destinations"
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {

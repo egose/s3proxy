@@ -50,6 +50,10 @@ const toc = [{
   "id": "docker",
   "level": 2
 }, {
+  "value": "Authenticated Starter In Docker",
+  "id": "authenticated-starter-in-docker",
+  "level": 3
+}, {
   "value": "Docker Compose",
   "id": "docker-compose",
   "level": 2
@@ -72,14 +76,17 @@ const toc = [{
 }];
 function _createMdxContent(props) {
   const _components = {
+    a: "a",
     code: "code",
     h1: "h1",
     h2: "h2",
+    h3: "h3",
     header: "header",
     li: "li",
     ol: "ol",
     p: "p",
     pre: "pre",
+    strong: "strong",
     ul: "ul",
     ...(0,lib/* useMDXComponents */.R)(),
     ...props.components
@@ -160,6 +167,71 @@ function _createMdxContent(props) {
       children: ["If your config depends on more ", (0,jsx_runtime.jsx)(_components.code, {
         children: "env(\"...\")"
       }), " values, pass them in as environment variables or via an env file."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "authenticated-starter-in-docker",
+      children: "Authenticated Starter In Docker"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The image entrypoint already includes ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "serve --config /etc/s3proxy/config.hcl"
+      }), ".\nUse an explicit executable override for other CLI commands (the distroless image\nhas no shell). With a locally built ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "s3proxy"
+      }), " image:"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "docker run --rm --network none --entrypoint /usr/local/bin/s3proxy \\\n  s3proxy print-example-config > config.hcl\n"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The host shell writes ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "config.hcl"
+      }), "; printing needs no variables or mounts. Edit\nits native ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "address = \"127.0.0.1:8080\""
+      }), " to ", (0,jsx_runtime.jsxs)(_components.strong, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "address = \":8080\""
+        }), " inside the container"]
+      }), ".\nContainer loopback cannot receive traffic forwarded to published ports."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Prepare ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "starter.env"
+      }), " with the five variables from the\n", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/quickstart#authenticated-binary-only-starter",
+        children: "authenticated native quickstart"
+      }), ":\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "S3PROXY_CLIENT_ACCESS_KEY"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "S3PROXY_CLIENT_SECRET_KEY"
+      }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "S3PROXY_TARGET_PRIMARY_ENDPOINT"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "S3PROXY_TARGET_PRIMARY_ACCESS_KEY"
+      }), ", and\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "S3PROXY_TARGET_PRIMARY_SECRET_KEY"
+      }), ". Use private client keys and real backend\ncredentials, not the synthetic offline values. In a Docker env file use\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "NAME=value"
+      }), " lines without shell ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "export"
+      }), " statements. Protect that file and make\nthe mounted config readable by the image's nonroot user."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The endpoint must be reachable ", (0,jsx_runtime.jsx)(_components.strong, {
+        children: "from the container"
+      }), "; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "127.0.0.1:9000"
+      }), " there means\nthe container itself, not the host or another backend container. Use an appropriate\nbackend DNS name on your container network or a routable endpoint. Pre-create\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "images-store"
+      }), ", and check the starter's ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "us-east-1"
+      }), " region and timeout/replay bounds\nagainst your deployment."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "docker run --rm --network none --entrypoint /usr/local/bin/s3proxy \\\n  --env-file ./starter.env -v \"$PWD/config.hcl:/etc/s3proxy/config.hcl:ro\" \\\n  s3proxy validate --config /etc/s3proxy/config.hcl\ndocker run --rm --network none --entrypoint /usr/local/bin/s3proxy \\\n  --env-file ./starter.env -v \"$PWD/config.hcl:/etc/s3proxy/config.hcl:ro\" \\\n  s3proxy routes --config /etc/s3proxy/config.hcl\ndocker run --rm -p 127.0.0.1:8080:8080 \\\n  --env-file ./starter.env -v \"$PWD/config.hcl:/etc/s3proxy/config.hcl:ro\" \\\n  s3proxy\n"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The last command uses the normal serve entrypoint and restricts publishing to host\nloopback. Add your backend container network as needed. For remote clients, apply\nnetwork access controls and ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "#reverse-proxying",
+        children: "TLS termination"
+      }), "; SigV4 does not\nencrypt HTTP traffic. These are deployment instructions, not a claim of live\nDocker/backend verification. Automated starter checks exercise native CLI output,\nvalidation, and topology offline."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "docker-compose",
       children: "Docker Compose"
@@ -272,14 +344,38 @@ function _createMdxContent(props) {
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
-        children: "/healthz"
+        children: "validate"
       }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "routes"
+      }), " check listener TCP ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "host:port"
+      }), " structure and the numeric\nport range offline. Missing port separators, URL-form addresses, and out-of-range\nnumeric ports now fail this gate before any success output or startup logging.\nWildcard hosts, hostnames, bracketed IPv6 with zones, named services, and zero or\nempty (ephemeral) ports remain supported. See the ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/configuration#listener-address-validation",
+        children: "listener address contract"
+      }), ".\nPassing validation does not establish hostname/service resolution, interface or\naddress ownership, bind permissions, or port availability in the deployment\nenvironment. Confirm those when starting the service; an occupied port or a valid\nbut unavailable local address intentionally passes offline inspection."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Configure load-balancer health checks as unsigned ", (0,jsx_runtime.jsx)(_components.strong, {
+        children: "GET"
+      }), " requests to the exact ", (0,jsx_runtime.jsx)(_components.code, {
         children: "/readyz"
-      }), " are unauthenticated endpoints on the main listener. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " path on a localhost, IP, or base host, with no ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Authorization"
+      }), " header and no query string (not even a bare ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?"
+      }), "). ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/healthz"
+      }), " has the same request contract. Eligible probes return ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "200 OK"
+      }), " with body ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ok"
+      }), ", including on virtual-host-only listeners. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "/readyz"
-      }), " reports only that the process is serving requests; it does not probe target backends. Configure load-balancer health checks against ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "/readyz"
-      }), ", and restrict access at the network or reverse-proxy layer if needed. The distroless image does not include a shell or HTTP client for an in-container health command."]
+      }), " reports only that the process is serving requests; it does not probe target backends."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Configured virtual bucket hosts, signed/presigned requests, HEAD and other methods, encoded path spellings, and query-bearing requests use normal S3 handling instead of local probes. The exact unsigned query-free base-host GET shape is reserved for probes; unconfigured aliases cannot be recognized as virtual bucket hosts. Use the listener's configured host suffixes when choosing a health-check host. Restrict access at the network or reverse-proxy layer if needed. The distroless image does not include a shell or HTTP client for an in-container health command. See ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/api-reference#health-endpoints",
+        children: "the API reference"
+      }), " for the full boundary contract."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The process handles ", (0,jsx_runtime.jsx)(_components.code, {
         children: "SIGINT"

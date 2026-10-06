@@ -3675,6 +3675,9 @@ video {
 .static {
   position: static;
 }
+.fixed {
+  position: fixed;
+}
 .absolute {
   position: absolute;
 }
@@ -3739,6 +3742,9 @@ video {
 }
 .grid {
   display: grid;
+}
+.contents {
+  display: contents;
 }
 .hidden {
   display: none;
@@ -4095,6 +4101,11 @@ video {
 }
 .uppercase {
   text-transform: uppercase;
+}
+.ordinal {
+  --tw-ordinal: ordinal;
+  font-feature-settings: var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction);
+  font-variant-numeric: var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction);
 }
 .leading-7 {
   line-height: 1.75rem;

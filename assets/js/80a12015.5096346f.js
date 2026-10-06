@@ -76,6 +76,7 @@ const toc = [{
 }];
 function _createMdxContent(props) {
   const _components = {
+    a: "a",
     code: "code",
     h1: "h1",
     h2: "h2",
@@ -332,7 +333,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "route \"tenant_logs\" {\n  parser          = \"tenant_logs\"\n  operations      = [\"GetObject\", \"PutObject\", \"DeleteObject\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    bucket       = \"shared-logs\"\n    key_template = \"{{ .Captures.tenant }}/{{ .Key }}\"\n  }\n}\n"
+        children: "route \"tenant_logs\" {\n  parser          = \"tenant_logs\"\n  operations      = [\"GetObject\", \"PutObject\", \"DeleteObject\", \"ListObjectsV2\", \"HeadBucket\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    bucket       = \"shared-logs\"\n    key_template = \"{{ .Captures.tenant }}/{{ .Key }}\"\n  }\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Template data includes:"
@@ -351,11 +352,48 @@ function _createMdxContent(props) {
         })
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Key rewrites change the outbound URL path; they do not translate into ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["Prepending preserves the key's leading and repeated slashes. For example,\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "assets/"
+      }), " maps ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "foo"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/foo"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "//foo"
+      }), " to ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "assets/foo"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "assets//foo"
+      }), ", and\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "assets///foo"
+      }), "; only the configured prefix's optional join slash is normalized."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Rewrites must preserve the authorized operation's shape. Stripping or template\noutput that empties an object key returns ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), ". A bucket\noperation that acquires a key is also rejected. All matched rewrites are\nvalidated before any route is dispatched."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "HeadBucket"
+      }), " applies only the bucket override and targets its root, even with an\nobject key template. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "ListObjectsV2"
-      }), " query parameters such as ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "prefix"
-      }), ". A listing route should normally leave its key empty and forward listing filters supplied by the client."]
+      }), " maps query filters and XML keys into the\nvisible namespace. Supported listing rules are bucket overrides, prepend\nprefixes, and templates of literals/", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".Bucket"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".Captures.name"
+      }), " followed by one\nterminal ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".Key"
+      }), ", including the tenant example above. Prepend and template\nprefixes may be combined. All strip-key/strip-path combinations and other\ntemplates are rejected for listing at startup. Runtime capture/escape failures\nreturn ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), " before dispatch. Use separate authorized routes to\nlimit clients to their tenant buckets; bucket visibility alone does not grant or\nrestrict route access."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Prefixes use raw path notation with valid percent escapes; list query/XML values\nare decoded S3 keys. For example, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%252F/"
+      }), " in a raw prefix maps to literal ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2F/"
+      }), "\nkey text. See ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/api-reference#listobjectsv2",
+        children: "listing semantics"
+      }), " for URL encoding,\nresponse bounds, and opaque pagination across backend selection changes."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "strict-prefix-matching",
       children: "Strict Prefix Matching"
@@ -411,7 +449,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "parser \"path_prefix\" \"primary_prefix\" {\n  prefix = \"/primary\"\n}\n\nroute \"primary_only\" {\n  parser          = \"primary_prefix\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\", \"HeadBucket\", \"ListObjectsV2\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    strip_path_prefix = \"/primary\"\n    bucket            = \"testbucket\"\n  }\n}\n"
+        children: "parser \"path_prefix\" \"primary_prefix\" {\n  prefix = \"/primary\"\n}\n\nroute \"primary_only\" {\n  parser          = \"primary_prefix\"\n  operations      = [\"GetObject\", \"HeadObject\", \"PutObject\", \"DeleteObject\", \"HeadBucket\", \"ListObjectsV2\"]\n  destinations    = [\"primary\"]\n  dispatch        = \"first\"\n  on_match        = \"stop\"\n  read_preference = \"first\"\n\n  rewrite {\n    bucket            = \"testbucket\"\n  }\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Replicated writes:"
