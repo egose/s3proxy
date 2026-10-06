@@ -27,6 +27,7 @@ repos:
         .pre-commit-config.yaml |
         internal/config/load_test.go |
         sandbox/seaweedfs-s3.json |
+        sandbox/seaweedfs-primary-s3.json |
         docs/tasks/.*
       )$
 - repo: local
