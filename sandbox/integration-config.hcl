@@ -21,7 +21,7 @@ auth "main" {
   }
 }
 
-// Backends: MinIO is the primary, SeaweedFS is the replica.
+// Backends: separate SeaweedFS instances back primary and replica.
 // Each target's credentials are independent.
 
 credential "static" "primary" {
@@ -75,7 +75,7 @@ target "s3" "error500" {
   credentials      = "primary"
 }
 
-// Route /primary/* to MinIO only. Validates single-destination forwarding
+// Route /primary/* to primary only. Validates single-destination forwarding
 // against a real S3 backend.
 
 parser "path_prefix" "primary_prefix" {
@@ -91,7 +91,6 @@ route "primary_only" {
   read_preference = "first"
 
   rewrite {
-    strip_path_prefix = "/primary"
     bucket            = "testbucket"
   }
 }
@@ -112,7 +111,6 @@ route "replica_only" {
   read_preference = "first"
 
   rewrite {
-    strip_path_prefix = "/replica"
     bucket            = "testbucket"
   }
 }
@@ -245,9 +243,43 @@ parser "bucket_regex" "tenant_logs" {
   pattern = "^tenant-(?P<tenant>[a-z0-9-]+)-logs$"
 }
 
+parser "bucket_exact" "listed_primary" {
+  bucket = "listed-primary"
+}
+
+route "listed_primary" {
+  parser       = "listed_primary"
+  operations   = ["GetObject", "PutObject", "DeleteObject", "HeadBucket", "ListObjectsV2"]
+  destinations = ["primary"]
+  dispatch     = "first"
+  on_match     = "stop"
+
+  rewrite {
+    bucket             = "testbucket"
+    prepend_key_prefix = "listing%20%252F/"
+  }
+}
+
+parser "bucket_exact" "listed_replica" {
+  bucket = "listed-replica"
+}
+
+route "listed_replica" {
+  parser       = "listed_replica"
+  operations   = ["GetObject", "PutObject", "DeleteObject", "HeadBucket", "ListObjectsV2"]
+  destinations = ["replica"]
+  dispatch     = "first"
+  on_match     = "stop"
+
+  rewrite {
+    bucket             = "testbucket"
+    prepend_key_prefix = "listing%20%252F/"
+  }
+}
+
 route "tenant_log_rewrite" {
   parser          = "tenant_logs"
-  operations      = ["GetObject", "HeadObject", "PutObject", "DeleteObject"]
+  operations      = ["GetObject", "HeadObject", "PutObject", "DeleteObject", "ListObjectsV2", "HeadBucket"]
   destinations    = ["primary"]
   dispatch        = "first"
   on_match        = "stop"

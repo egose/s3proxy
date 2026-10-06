@@ -133,7 +133,7 @@ Example:
 ```hcl
 route "tenant_logs" {
   parser          = "tenant_logs"
-  operations      = ["GetObject", "PutObject", "DeleteObject"]
+  operations      = ["GetObject", "PutObject", "DeleteObject", "ListObjectsV2", "HeadBucket"]
   destinations    = ["primary"]
   dispatch        = "first"
   on_match        = "stop"
@@ -152,7 +152,30 @@ Template data includes:
 - `Key`
 - `Captures`
 
-Key rewrites change the outbound URL path; they do not translate into `ListObjectsV2` query parameters such as `prefix`. A listing route should normally leave its key empty and forward listing filters supplied by the client.
+Prepending preserves the key's leading and repeated slashes. For example,
+`assets/` maps `foo`, `/foo`, and `//foo` to `assets/foo`, `assets//foo`, and
+`assets///foo`; only the configured prefix's optional join slash is normalized.
+
+Rewrites must preserve the authorized operation's shape. Stripping or template
+output that empties an object key returns `400 InvalidRequest`. A bucket
+operation that acquires a key is also rejected. All matched rewrites are
+validated before any route is dispatched.
+
+`HeadBucket` applies only the bucket override and targets its root, even with an
+object key template. `ListObjectsV2` maps query filters and XML keys into the
+visible namespace. Supported listing rules are bucket overrides, prepend
+prefixes, and templates of literals/`.Bucket`/`.Captures.name` followed by one
+terminal `.Key`, including the tenant example above. Prepend and template
+prefixes may be combined. All strip-key/strip-path combinations and other
+templates are rejected for listing at startup. Runtime capture/escape failures
+return `400 InvalidRequest` before dispatch. Use separate authorized routes to
+limit clients to their tenant buckets; bucket visibility alone does not grant or
+restrict route access.
+
+Prefixes use raw path notation with valid percent escapes; list query/XML values
+are decoded S3 keys. For example, `%252F/` in a raw prefix maps to literal `%2F/`
+key text. See [listing semantics](api-reference.md#listobjectsv2) for URL encoding,
+response bounds, and opaque pagination across backend selection changes.
 
 ## Strict Prefix Matching
 
@@ -200,7 +223,6 @@ route "primary_only" {
   read_preference = "first"
 
   rewrite {
-    strip_path_prefix = "/primary"
     bucket            = "testbucket"
   }
 }

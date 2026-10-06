@@ -10,6 +10,7 @@ import (
 	"github.com/egose/s3proxy/internal/backend/s3"
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/replaybody"
+	"github.com/egose/s3proxy/internal/requestpayload"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/router"
 	"github.com/egose/s3proxy/internal/s3ops"
@@ -62,6 +63,9 @@ type dispatcher struct {
 }
 
 func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http.Request, op s3ops.Operation, rw rewrite.Result) (*Result, error) {
+	if err := requestpayload.Validate(req.Header); err != nil {
+		return nil, err
+	}
 	result := &Result{}
 
 	if s3ops.IsRead(op) && match.Route.ReadPreference == config.ReadOrderedFailover {
@@ -83,6 +87,7 @@ func (d *dispatcher) Dispatch(ctx context.Context, match router.Match, req *http
 			Bucket:    rw.Bucket,
 			Key:       rw.Key,
 			Source:    req,
+			Namespace: rw.Namespace,
 		})
 		if err != nil {
 			result.Attempts = append(result.Attempts, Attempt{Target: target, Error: err})
@@ -271,6 +276,7 @@ func (d *dispatcher) dispatchOrderedFailover(ctx context.Context, result *Result
 			Bucket:    rw.Bucket,
 			Key:       rw.Key,
 			Source:    req,
+			Namespace: rw.Namespace,
 		})
 		if err != nil {
 			result.Attempts = append(result.Attempts, Attempt{Target: target, Error: err})

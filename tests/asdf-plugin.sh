@@ -60,4 +60,8 @@ chmod +x "$tmp/fakebin/git"
 versions=$(PATH="$tmp/fakebin:$PATH" ASDF_S3PROXY_GITHUB_REPOSITORY=egose/s3proxy "$root/bin/list-all")
 test "$versions" = "1.2.3 2.0.0"
 
+bash "$root/tests/asdf-install-faults.sh"
+bash "$root/tests/asdf-versions.sh"
+bash "$root/tests/asdf-download-faults.sh"
+
 echo "asdf plugin tests passed"

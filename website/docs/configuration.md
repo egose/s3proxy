@@ -84,7 +84,6 @@ route "images_rw" {
   read_preference = "first"
 
   rewrite {
-    strip_path_prefix  = "/images"
     prepend_key_prefix = "assets/"
     bucket             = "images-store"
   }
@@ -128,6 +127,37 @@ Notes:
 - replay-bound requests fail with `413 EntityTooLarge` when the per-request limit is exceeded and `503 SlowDown` when the aggregate budget is exhausted
 
 Replay buffering is used for fan-out writes, writes matched by multiple routes, inbound SigV4 requests with a concrete payload hash, and outbound requests whose body length is unknown.
+
+### Listener Address Validation
+
+`address` must be a nonempty TCP `host:port` string, not a URL. Configuration
+loading (including `validate`, `routes`, and `serve`) checks Go's host/port
+separator and bracket structure and rejects numeric ports outside `0`–`65535`.
+For example, `127.0.0.1`, `http://127.0.0.1:8080`, and `:65536` now fail during
+configuration validation rather than later at startup. Errors identify the
+listener label and `address` field without echoing the address or parser excerpts.
+
+Accepted offline forms include:
+
+- wildcard hosts: `:8080`, `0.0.0.0:8080`, `[::]:8080`
+- IPv4 and hostnames: `127.0.0.1:8080`, `gateway.example.com:8080`
+- bracketed IPv6, including zones: `[::1]:8080`, `[fe80::1%eth0]:8080`
+- named service ports: `localhost:http`, `:https`
+- ephemeral ports: `127.0.0.1:0` or an empty port such as `127.0.0.1:` or `:`
+
+Numeric ports are decimal; leading zeros and an optional sign retain Go's
+behavior (`:+8080`, `:00080`, and `:-0` are accepted). Go also treats a bare `+`
+or `-` port as zero. Negative nonzero numeric ports are rejected. Nonnumeric
+service names are left for runtime resolution; validation does not check that
+the service exists. Go stops parsing sufficiently large numeric prefixes before
+reaching any service suffix; those overflow forms (such as `:10737418240service`)
+are also rejected offline.
+
+This is an offline syntax gate, not a bind-availability check or a DNS naming
+policy. Hostname/service resolution, IPv6 zone/interface existence, local address
+ownership, bind permissions, and port availability are checked at runtime.
+Syntactically valid unavailable addresses and occupied ports still pass
+`validate` and `routes`; neither command binds a listener or contacts backends.
 
 ## Auth
 
@@ -293,7 +323,6 @@ Example:
 
 ```hcl
 rewrite {
-  strip_path_prefix  = "/images"
   prepend_key_prefix = "assets/"
   bucket             = "images-store"
   key_template       = "{{ .Captures.tenant }}/{{ .Key }}"
@@ -302,7 +331,24 @@ rewrite {
 
 Template data uses the names `Bucket`, `Key`, and `Captures`.
 
-Key rewrites apply to the URL path. They do not rewrite `ListObjectsV2` query parameters such as `prefix`. Do not combine `ListObjectsV2` with a rewrite that turns its empty key into a non-empty path unless the backend intentionally supports that request shape.
+`HeadBucket` applies only `bucket` and targets the backend bucket root. It does
+not check whether a virtual prefix exists.
+
+`ListObjectsV2` supports bucket-only rewrites, prepend prefixes, and prefix-only
+templates made of literals, `.Bucket`, and `.Captures.name`, followed by exactly
+one terminal `{{ .Key }}`. These prefixes may be combined; `.Bucket` is the
+rewritten bucket. Template functions, pipelines, control flow, additional definitions/calls,
+variables, repeated/nonterminal keys, and all strip-key/strip-path combinations
+are rejected at startup on listing routes. Path-style parsing already removes
+the visible bucket segment, so redundant stripping should be removed.
+
+Configured prefixes use raw path notation with valid percent escapes: `%25`
+means a literal percent, `%2F` a slash, and `%252F` literal `%2F` key text. Missing
+captures or invalid runtime prefix escapes return `400 InvalidRequest` before
+dispatch. Object-only routes can still use general templates and strip rules.
+Query/XML keys use S3 key values instead of raw paths; list filters and results
+are translated into the visible namespace. See [the listing contract](api-reference.md#listobjectsv2)
+for encoding, bounds, and pagination limitations.
 
 ## Virtual Buckets
 
@@ -321,11 +367,43 @@ Although `ListBuckets` is accepted as an operation name during route validation,
 
 ## Environment Variables
 
-Use `env("VAR")` anywhere a string is allowed. The value is textually inlined before HCL parsing.
+Use `env("VAR")` anywhere a string is allowed. This native HCL function returns
+the environment value as a literal string during evaluation. `${...}`,
+`%{...}`, quotes, newlines, backslashes, and Unicode in the value are data;
+they are never parsed as HCL source or templates.
 
-An unset variable is replaced with an empty string. There is no separate missing-variable diagnostic; required-field validation may reject the resulting value, while optional string fields may remain empty.
+Ordinary function-call whitespace works, including `env ( "VAR" )`. Comments
+and literal strings containing `env(...)` text are not evaluated. HCL source
+can explicitly interpolate a call, such as `"prefix-${env("VAR")}"`; the
+returned value is still literal and is not evaluated again. Field-specific
+processing still applies, such as URL parsing for `endpoint` and Go template
+compilation for `key_template`.
 
-For local runs, load `.env` before invoking the proxy if needed:
+An unset variable returns an empty string. There is no separate missing-variable diagnostic; required-field validation may reject the resulting value, while optional string fields may remain empty.
+
+The loader parses the original file bytes, so parse/decode diagnostics retain
+the original filename, line, and column, including leading blank lines.
+
+Every `env()` result is treated as sensitive in diagnostics, not just credential
+values. HCL errors in expressions that call `env()` retain their category,
+block/field identity, and original location, but withhold value-bearing details.
+This includes explicit interpolation, nested calls, and collection expressions.
+Duplicate-object-key errors also withhold the evaluated key for literal
+expressions, while retaining the uniqueness cause and block/field location.
+Other ordinary HCL errors for public expressions retain their detailed explanations.
+
+Compilation and validation errors omit attribute values for both environment
+and literal inputs. They report the affected block/field and a safe cause, such
+as invalid URL escape, expected duration syntax, invalid regex capture name,
+unknown template function, unknown reference, or allowed enum choices. URL,
+duration, regex, and template compilation errors include the original expression
+location. The CLI uses the same diagnostics and exits unsuccessfully for invalid
+configuration. Config filenames and literal block labels remain visible; keep
+secrets in values rather than in those identifiers. This diagnostic policy does
+not alter successfully loaded values or skip field validation.
+
+For local runs, load `.env` before invoking the proxy if needed; the CLI does
+not load it automatically:
 
 ```sh
 set -a; . ./.env; set +a
@@ -342,6 +420,7 @@ Startup fails on invalid configuration. Common checks include:
 - invalid parser config such as empty `prefix`, `bucket`, `pattern`, or `suffix`
 - routes that reference unknown parsers or destinations
 - invalid operation names or read preferences
+- non-reversible rewrites on routes supporting `ListObjectsV2`
 - duplicate route operations or destinations
 - `on_match = "continue"` on a route that is not write-only
 - `dispatch = "all"` without `PutObject` or `DeleteObject`

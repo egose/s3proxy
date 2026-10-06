@@ -4,7 +4,7 @@ SHELL := /usr/bin/env bash
         docker-build docker-run run sandbox-up sandbox-down sandbox-destroy \
         sandbox-reset sandbox-logs sandbox-logs-follow sandbox-ps validate \
         test-integration test-integration-race sandbox-integration-up \
-        sandbox-integration-down
+        sandbox-integration-down test-sandbox
 
 # --- Project --------------------------------------------------------------
 
@@ -18,10 +18,11 @@ GO_BUILD_FLAGS := -trimpath -buildvcs=false
 
 # --- Docker / Compose -----------------------------------------------------
 
-COMPOSE      := docker-compose --env-file .env -f ./sandbox/docker-compose.yml
-UP_FLAGS     := up --build --remove-orphans
+export SANDBOX_PROJECT_NAME SANDBOX_COMPOSE
+COMPOSE      := bash scripts/sandbox-compose.sh
+UP_FLAGS     := up --build
 DOWN_FLAGS   := down
-DESTROY_FLAGS := down --volumes --rmi all --remove-orphans
+DESTROY_FLAGS := down --volumes --rmi all
 LOGS_FLAGS   := logs --tail=50
 
 DAEMON ?= false
@@ -99,6 +100,9 @@ check-toolchain: ## Verify tool declarations and build inputs remain aligned
 test-asdf: ## Test the public asdf plugin scripts
 	@tests/asdf-plugin.sh
 
+test-sandbox: ## Test sandbox isolation with fake Compose (no Docker required)
+	@bash tests/sandbox-lifecycle.sh
+
 # --- Docker ---------------------------------------------------------------
 
 docker-build: ## Build the container image as $(PREFIX):$(VERSION)
@@ -124,7 +128,6 @@ sandbox-down: ## Stop sandbox stack
 
 sandbox-destroy: ## Stop sandbox + remove containers, volumes, and images
 	@$(COMPOSE) $(DESTROY_FLAGS)
-	@docker image prune -f || true
 
 sandbox-reset: sandbox-destroy sandbox-up ## Destroy then up
 

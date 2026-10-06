@@ -423,16 +423,23 @@ func TestRepeatedShutdownTimeoutsReleaseResources(t *testing.T) {
 
 func newTestApp(t *testing.T, handler http.Handler, shutdownTimeout time.Duration) *App {
 	t.Helper()
-	addr := freeAddr(t)
-	return &App{
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	a := &App{
 		server: &http.Server{
-			Addr:    addr,
+			Addr:    ln.Addr().String(),
 			Handler: handler,
 		},
+		listen:          func(string, string) (net.Listener, error) { return ln, nil },
 		transport:       &http.Transport{},
 		logger:          testLogger(),
 		shutdownTimeout: shutdownTimeout,
 	}
+	t.Cleanup(func() { a.server.Close() })
+	return a
 }
 
 func tempConfig(t *testing.T, addr string) string {

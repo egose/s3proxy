@@ -16,16 +16,18 @@ import (
 // stack must be up before tests run; waitForReady blocks up to 60s.
 func TestHealthReady(t *testing.T) {
 	waitForReady(t, 60*time.Second)
-	resp, body := signedRequest(t, http.MethodGet, "/healthz", nil, nil)
-	_ = body
-	assertStatus(t, resp, body, 200)
-	resp, body = signedRequest(t, http.MethodGet, "/readyz", nil, nil)
-	assertStatus(t, resp, body, 200)
+	for _, path := range []string{"/healthz", "/readyz"} {
+		resp, body := doRequest(t, newProxyRequest(t, http.MethodGet, path, nil, nil))
+		assertStatus(t, resp, body, 200)
+		if string(body) != "ok" {
+			t.Errorf("%s body = %q, want ok", path, body)
+		}
+	}
 }
 
 // TestSingleDestRoundTrip proves the simplest end-to-end path: a signed
-// PutObject against /primary/<key> hits MinIO, and a subsequent GetObject
-// returns the same bytes. Exercises outbound SigV4 signing against MinIO's
+// PutObject against /primary/<key> hits primary, and a subsequent GetObject
+// returns the same bytes. Exercises outbound SigV4 signing against primary's
 // real S3 API.
 func TestSingleDestRoundTrip(t *testing.T) {
 	waitForReady(t, 60*time.Second)
@@ -100,7 +102,7 @@ func TestNamedCaptureRewrite(t *testing.T) {
 
 // TestSingleDestSeaweedFS forwards to the SeaweedFS backend via the /replica/*
 // prefix. This validates that routing can reach an alternate backend whose
-// endpoint, addressing, and credentials differ from MinIO.
+// endpoint, addressing, and credentials differ from primary.
 func TestSingleDestSeaweedFS(t *testing.T) {
 	waitForReady(t, 60*time.Second)
 	key := "seaweed-" + randHex(8)
@@ -132,7 +134,7 @@ func TestFanoutWriteReplication(t *testing.T) {
 	resp, respBody := signedRequest(t, http.MethodPut, "/replicate/"+key, body, nil)
 	assertStatus(t, resp, respBody, 200)
 
-	// Read back from primary (MinIO).
+	// Read back from primary.
 	resp, respBody = signedRequest(t, http.MethodGet, "/primary/"+key, nil, nil)
 	assertStatus(t, resp, respBody, 200)
 	if string(respBody) != string(body) {
@@ -397,7 +399,7 @@ func TestMultipartAndCopyObjectRejected(t *testing.T) {
 
 // TestContinueWriteComposition proves on_match=continue for write-only routes:
 // a single PutObject against /compose/* is applied to both route matches, one
-// targeting MinIO and one targeting SeaweedFS.
+// targeting primary and one targeting SeaweedFS.
 func TestContinueWriteComposition(t *testing.T) {
 	waitForReady(t, 60*time.Second)
 	key := "compose-" + randHex(8)
@@ -439,7 +441,7 @@ func TestContinueDeleteComposition(t *testing.T) {
 	assertStatus(t, resp, respBody, 404)
 }
 
-// TestListObjectsV2 forwards to MinIO and expects a ListBucketResult XML
+// TestListObjectsV2 forwards to primary and expects a ListBucketResult XML
 // response. We first PutObject a known key and then list it.
 func TestListObjectsV2(t *testing.T) {
 	waitForReady(t, 60*time.Second)

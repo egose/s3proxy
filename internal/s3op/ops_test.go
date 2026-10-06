@@ -1,6 +1,46 @@
 package s3op
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
+
+func TestValidateOutboundShape(t *testing.T) {
+	valid := map[Operation]struct{ method, key string }{
+		GetObject:     {http.MethodGet, "key"},
+		HeadObject:    {http.MethodHead, "key"},
+		PutObject:     {http.MethodPut, "key"},
+		DeleteObject:  {http.MethodDelete, "key"},
+		HeadBucket:    {http.MethodHead, ""},
+		ListObjectsV2: {http.MethodGet, ""},
+	}
+	for _, op := range append(DeclaredOperations(), "", "DeleteBucket") {
+		t.Run(string(op), func(t *testing.T) {
+			shape, supported := valid[op]
+			if err := ValidateOutboundShape(op, shape.method, "bucket", shape.key); (err == nil) != supported {
+				t.Fatalf("valid shape error = %v, supported = %t", err, supported)
+			}
+			if !supported {
+				return
+			}
+			for _, method := range []string{"", "GET", "HEAD", "PUT", "DELETE", "POST"} {
+				if err := ValidateOutboundShape(op, method, "bucket", shape.key); (err == nil) != (method == shape.method) {
+					t.Errorf("method %q: %v", method, err)
+				}
+			}
+			for _, bucket := range []string{"", "bucket/key", "bucket%2Fkey", "bucket?query", "bucket#fragment", "bucket\\key"} {
+				if err := ValidateOutboundShape(op, shape.method, bucket, shape.key); err == nil {
+					t.Errorf("accepted bucket %q", bucket)
+				}
+			}
+			for _, key := range []string{"", "/", "//foo", "%2Ffoo", "foo//bar/../"} {
+				if err := ValidateOutboundShape(op, shape.method, "bucket", key); (err == nil) != ((key == "") == (shape.key == "")) {
+					t.Errorf("key %q: %v", key, err)
+				}
+			}
+		})
+	}
+}
 
 func TestConfigurableOperationsMatchCapability(t *testing.T) {
 	seen := make(map[Operation]bool)

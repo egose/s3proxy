@@ -1,12 +1,55 @@
 package rewrite
 
 import (
+	"net/http"
 	"testing"
 	"text/template"
 
 	"github.com/egose/s3proxy/internal/config"
 	"github.com/egose/s3proxy/internal/requestctx"
 )
+
+func TestApply_PreservesPrependedKeyBytes(t *testing.T) {
+	for _, prefix := range []string{"assets", "assets/"} {
+		for _, key := range []string{"foo", "/foo", "//foo", "/", "foo//bar/../", "%2Ffoo", "a%20b/雪"} {
+			t.Run(prefix+":"+key, func(t *testing.T) {
+				result, err := New().Apply(&requestctx.Context{Bucket: "bucket", Key: key}, config.RewriteRule{PrependKeyPrefix: prefix}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if want := "assets/" + key; result.Key != want {
+					t.Fatalf("key = %q, want %q", result.Key, want)
+				}
+			})
+		}
+	}
+}
+
+func TestApply_RejectsEmptyObjectKey(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete} {
+		for name, rule := range map[string]config.RewriteRule{
+			"strip key":      {StripKeyPrefix: "key"},
+			"strip path":     {StripPathPrefix: "/bucket/key"},
+			"empty template": {KeyTemplate: `{{ "" }}`, CompiledTemplate: template.Must(template.New("key").Parse(`{{ "" }}`))},
+		} {
+			t.Run(method+"/"+name, func(t *testing.T) {
+				_, err := New().Apply(&requestctx.Context{Method: method, Bucket: "bucket", Key: "key", RawPath: "/bucket/key"}, rule, nil)
+				if err == nil {
+					t.Fatal("expected invalid rewrite error")
+				}
+			})
+		}
+	}
+}
+
+func TestApply_BucketOnlyRewritePreservesEmptyKey(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		result, err := New().Apply(&requestctx.Context{Method: method, Bucket: "bucket"}, config.RewriteRule{Bucket: "store"}, nil)
+		if err != nil || result.Bucket != "store" || result.Key != "" {
+			t.Fatalf("%s: result = %+v, error = %v", method, result, err)
+		}
+	}
+}
 
 func TestApply_StripPathPrefix(t *testing.T) {
 	e := New()

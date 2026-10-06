@@ -1,0 +1,28 @@
+{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    },
+    {
+      "name": "primary",
+      "credentials": [
+        {
+          "accessKey": "access-key",
+          "secretKey": "secret-key"
+        }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    },
+    {
+      "name": "ci-access-key",
+      "credentials": [
+        {
+          "accessKey": "anonymous",
+          "secretKey": "anonymous"
+        }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    }
+  ]
+}

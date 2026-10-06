@@ -178,3 +178,38 @@ func TestFromRequest_RejectsPathStyleWhenDisabled(t *testing.T) {
 		t.Fatalf("expected no-addressing-match error, got %v", err)
 	}
 }
+
+func TestFromRequest_VirtualHostBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, host, bucket string
+		suffixes           []string
+		enabled            bool
+	}{
+		{"normalized", "Visible.S3Proxy.Test.:9000", "visible", []string{"S3Proxy.Test.:8080"}, true},
+		{"nested-bucket", "nested.visible.s3proxy.test", "nested.visible", []string{"s3proxy.test"}, true},
+		{"base", "s3proxy.test", "", []string{"s3proxy.test"}, true},
+		{"empty-bucket", ".s3proxy.test", "", []string{"s3proxy.test", "test"}, true},
+		{"dot-boundary", "nots3proxy.test", "", []string{"s3proxy.test"}, true},
+		{"suffix-boundary", "visible.s3proxy.test.evil", "", []string{"s3proxy.test"}, true},
+		{"broad-first", "visible.s3proxy.test", "visible.s3proxy", []string{"test", "s3proxy.test"}, true},
+		{"narrow-first", "visible.s3proxy.test", "visible", []string{"s3proxy.test", "test"}, true},
+		{"disabled", "visible.s3proxy.test", "", []string{"s3proxy.test"}, false},
+		{"no-suffixes", "visible.s3proxy.test", "", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Addressing{PathStyle: true, VirtualHosted: tc.enabled, HostSuffixes: tc.suffixes}
+			r := &http.Request{Host: tc.host, Method: "GET", URL: &url.URL{Path: "/healthz"}}
+			ctx, err := FromRequest(r, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bucket, key, mode := tc.bucket, "healthz", AddressingVirtualHosted
+			if tc.bucket == "" {
+				bucket, key, mode = "healthz", "", AddressingPathStyle
+			}
+			if ctx.Bucket != bucket || ctx.Key != key || ctx.AddressingMode != mode {
+				t.Fatalf("context=%+v, want bucket=%q key=%q mode=%q", ctx, bucket, key, mode)
+			}
+		})
+	}
+}

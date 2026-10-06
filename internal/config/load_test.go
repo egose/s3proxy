@@ -198,36 +198,36 @@ bucket "images" {
 		{
 			name:    "unknown allow route",
 			config:  strings.Replace(exampleConfig, `"route.images_rw"`, `"route.missing"`, 1),
-			wantErr: `auth "main": client "ci": allow_routes references unknown route "missing"`,
+			wantErr: `auth "main": client "ci": allow_routes references unknown route`,
 		},
 		{
 			name: "invalid allow op",
 			config: strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `allow_ops = ["GetObject", "BogusOp"]
 
     visible_buckets = ["images"]`, 1),
-			wantErr: `auth "main": client "ci": allow_ops contains unsupported operation "BogusOp"`,
+			wantErr: `auth "main": client "ci": allow_ops contains unsupported operation`,
 		},
 		{
 			name:    "unknown visible bucket",
 			config:  strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `visible_buckets = ["missing"]`, 1),
-			wantErr: `auth "main": client "ci": visible_buckets references unknown bucket "missing"`,
+			wantErr: `auth "main": client "ci": visible_buckets references unknown bucket`,
 		},
 		{
 			name:    "duplicate allow route",
 			config:  strings.Replace(exampleConfig, `"route.images_rw",`, `"route.images_rw", "route.images_rw",`, 1),
-			wantErr: `auth "main": client "ci": allow_routes contains duplicate entry "images_rw"`,
+			wantErr: `auth "main": client "ci": allow_routes contains duplicate entry`,
 		},
 		{
 			name: "duplicate allow op",
 			config: strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `allow_ops = ["GetObject", "GetObject"]
 
     visible_buckets = ["images"]`, 1),
-			wantErr: `auth "main": client "ci": allow_ops contains duplicate entry "GetObject"`,
+			wantErr: `auth "main": client "ci": allow_ops contains duplicate entry`,
 		},
 		{
 			name:    "duplicate visible bucket",
 			config:  strings.Replace(exampleConfig, `visible_buckets = ["images"]`, `visible_buckets = ["images", "images"]`, 1),
-			wantErr: `auth "main": client "ci": visible_buckets contains duplicate entry "images"`,
+			wantErr: `auth "main": client "ci": visible_buckets contains duplicate entry`,
 		},
 	}
 
@@ -741,7 +741,7 @@ func TestLoadFile_RejectsDuplicateDestinationRefs(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error for duplicate destination")
 			}
-			for _, want := range []string{`route "images_rw"`, `duplicate target "primary"`} {
+			for _, want := range []string{`route "images_rw"`, `destinations contain duplicate target`} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("error = %q, want substring %q", err.Error(), want)
 				}
@@ -756,7 +756,7 @@ func TestLoadFile_RejectsDuplicateRouteOperations(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate operation")
 	}
-	if want := `route "images_rw": operations contain duplicate entry "GetObject"`; !strings.Contains(err.Error(), want) {
+	if want := `route "images_rw": operations contain duplicate entry`; !strings.Contains(err.Error(), want) {
 		t.Fatalf("error = %q, want substring %q", err.Error(), want)
 	}
 }

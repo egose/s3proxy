@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/requestquery"
 )
 
 type AddressingMode string
@@ -35,28 +36,23 @@ func IsNoAddressingMatch(err error) bool {
 }
 
 func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
+	query, err := requestquery.Parse(r.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
 	escapedPath := requestEscapedPath(r)
 	ctx := &Context{
 		Host:    normalizeHost(r.Host),
 		RawPath: escapedPath,
-		Query:   r.URL.Query(),
+		Query:   query,
 		Method:  r.Method,
 		Headers: r.Header,
 	}
 
-	if cfg.VirtualHosted && len(cfg.HostSuffixes) > 0 {
-		for _, suffix := range cfg.HostSuffixes {
-			suffix = normalizeHost(suffix)
-			if strings.HasSuffix(ctx.Host, "."+suffix) {
-				bucket := strings.TrimSuffix(ctx.Host, "."+suffix)
-				if bucket != "" {
-					ctx.AddressingMode = AddressingVirtualHosted
-					ctx.Bucket = bucket
-					ctx.Key = strings.TrimPrefix(escapedPath, "/")
-				}
-				break
-			}
-		}
+	if bucket := VirtualBucket(r.Host, cfg); bucket != "" {
+		ctx.AddressingMode = AddressingVirtualHosted
+		ctx.Bucket = bucket
+		ctx.Key = strings.TrimPrefix(escapedPath, "/")
 	}
 
 	if ctx.AddressingMode == "" && cfg.PathStyle {
@@ -71,6 +67,20 @@ func FromRequest(r *http.Request, cfg config.Addressing) (*Context, error) {
 	}
 
 	return ctx, nil
+}
+
+func VirtualBucket(host string, cfg config.Addressing) string {
+	if !cfg.VirtualHosted {
+		return ""
+	}
+	host = normalizeHost(host)
+	for _, suffix := range cfg.HostSuffixes {
+		suffix = normalizeHost(suffix)
+		if strings.HasSuffix(host, "."+suffix) {
+			return strings.TrimSuffix(host, "."+suffix)
+		}
+	}
+	return ""
 }
 
 func parsePathStyle(path string) (bucket, key string) {

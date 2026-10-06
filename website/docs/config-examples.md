@@ -51,7 +51,6 @@ route "images_rw" {
   read_preference = "first"
 
   rewrite {
-    strip_path_prefix = "/images"
     bucket            = "images-store"
   }
 }
@@ -118,7 +117,6 @@ route "images_rw" {
   read_preference = "first"
 
   rewrite {
-    strip_path_prefix = "/images"
     bucket            = "images-store"
   }
 }

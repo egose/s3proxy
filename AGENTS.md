@@ -15,9 +15,12 @@ Operational guide for AI agents (and humans) working in this repo.
 | `make docker-build`                          | Multi-stage container build as `s3proxy:$(VERSION)`       |
 | `make docker-run CONFIG=path/to/config.hcl`  | Run the container image with a mounted config             |
 
-The HCL config uses `env("VAR")` for secret/placeholder substitution; values
-are textually inlined **before** HCL parsing. Run `set -a; . ./.env; set +a`
-before invoking the binary locally so env vars resolve.
+The HCL config exposes `env("VAR")` as a native function returning a literal
+string during evaluation; environment contents are never parsed as HCL source
+or templates. Unset variables return an empty string, then ordinary field
+validation applies. The loader parses original source bytes to preserve
+diagnostic locations. Run `set -a; . ./.env; set +a` before invoking the binary
+locally so env vars resolve.
 
 ## Lint / typecheck / test
 
@@ -55,8 +58,8 @@ make sandbox-down
 ```
 
 `make sandbox-integration-up` is the canonical CI-shaped entry point. It
-sources `.env` into the proxy's environment, launches s3proxy detached
-via `setsid` so it isn't killed by SIGHUP when the recipe shell exits,
+sources `.env` into the proxy's environment, launches s3proxy as a child
+of the integration runner,
 runs `go test -tags integration`, then tears down the proxy AND the
 docker-compose stack, propagating the test's exit code.
 
@@ -76,14 +79,29 @@ The sandbox stack lives in `sandbox/docker-compose.yml`. Keep existing
 services (azurite, fake-gcs-server) even when adding new ones — they are
 referenced by other tests/projects in this environment.
 
+Every sandbox Compose call goes through `scripts/sandbox-compose.sh` with
+explicit project `s3proxy-sandbox`. It prefers `docker compose`, with a
+`docker-compose` fallback; `SANDBOX_COMPOSE` may specify one executable path.
+Use `SANDBOX_PROJECT_NAME=s3proxy-<suffix>` in the environment or Make command
+line for an alternate identity, consistently across lifecycle commands.
+The wrapper ignores `COMPOSE_PROJECT_NAME` and rejects identities outside the
+`s3proxy-` namespace. The integration runner pins its selection before loading
+credentials from `.env`. Run `make test-sandbox` for the fake lifecycle regression.
+
+Legacy stacks used the shared `sandbox` project. Never run shared-project
+orphan cleanup or prune resources to migrate them. Inspect ownership and ports;
+leave unfamiliar containers/volumes intact. Migration steps and fixed-port
+limitations are in `website/docs/operations.md#sandbox-isolation-and-migration`.
+
 ## Conventions
 
 - **No comments** in source files unless the surrounding code dictates
   otherwise — the design doc at `docs/design.md` holds the rationale.
 - Module path: `github.com/egose/s3proxy`.
 - All HCL blocks use two-label syntax: `listener "http" "public" {}`.
-- Outbound SigV4: AWS SDK v2 `v4.NewSigner().SignHTTP()` with
-  `UNSIGNED-PAYLOAD`; the `Content-Length` header MUST be set explicitly
+- Inbound and outbound SigV4 use the AWS SDK v2 signer with
+  `DisableURIPathEscaping = true` for S3 canonical paths, including presigning.
+- Outbound SigV4 uses `UNSIGNED-PAYLOAD`; the `Content-Length` header MUST be set explicitly
   before signing or S3 backends reject with `SignatureDoesNotMatch`.
 - Inbound SigV4 verification re-signs with the stored secret key using the
   request's `X-Amz-Date` and compares `Authorization` headers; only the

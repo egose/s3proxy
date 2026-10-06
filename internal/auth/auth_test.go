@@ -24,7 +24,7 @@ import (
 )
 
 func v4signer() *v4.Signer {
-	return v4.NewSigner()
+	return v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
 }
 
 func newTestAuthenticator(cfg config.Auth) (Authenticator, error) {

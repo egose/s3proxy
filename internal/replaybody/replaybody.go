@@ -13,6 +13,7 @@ import (
 const DefaultMaxBytes int64 = 32 << 20
 const DefaultAggregateMaxBytes int64 = DefaultMaxBytes * 8
 const readChunkSize = 32 * 1024
+const maxConsecutiveEmptyReads = 100
 
 var ErrBodyTooLarge = errors.New("request body too large to replay")
 var ErrBudgetExhausted = errors.New("aggregate replay body budget exhausted")
@@ -160,12 +161,18 @@ func (b *Budget) readUnknown(ctx context.Context, src io.Reader, maxBytes int64)
 	buf := make([]byte, readChunkSize)
 	var length int64
 	var charged int64
+	filled := 0
+	emptyReads := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			b.release(charged)
 			return nil, err
 		}
-		n, err := src.Read(buf)
+		n, err := src.Read(buf[filled:])
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			b.release(charged)
+			return nil, ctxErr
+		}
 		if n > 0 {
 			if length+int64(n) > maxBytes {
 				b.release(charged)
@@ -176,20 +183,30 @@ func (b *Budget) readUnknown(ctx context.Context, src io.Reader, maxBytes int64)
 				return nil, err
 			}
 			charged += int64(n)
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			chunks = append(chunks, chunk)
 			length += int64(n)
+			filled += n
+			emptyReads = 0
+		} else if err == nil {
+			emptyReads++
+			if emptyReads >= maxConsecutiveEmptyReads {
+				err = io.ErrNoProgress
+			}
 		}
-		if err == io.EOF {
-			return &bufferedBody{chunks: chunks, length: length, charged: charged}, nil
-		}
-		if err != nil {
+		if err != nil && err != io.EOF {
 			b.release(charged)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
 			return nil, fmt.Errorf("read request body: %w", err)
+		}
+		if filled > 0 && (filled == len(buf) || err == io.EOF) {
+			chunk := make([]byte, filled)
+			copy(chunk, buf[:filled])
+			chunks = append(chunks, chunk)
+			filled = 0
+		}
+		if err == io.EOF {
+			return &bufferedBody{chunks: chunks, length: length, charged: charged}, nil
 		}
 	}
 }

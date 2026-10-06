@@ -4,46 +4,45 @@ x-common-props: &common-props
   networks: [s3proxy]
 
 services:
+  # Primary S3 backend (SeaweedFS). The service keeps the historical `minio`
+  # name so existing endpoints (localhost:9000) and init targets stay stable.
   minio:
     <<: *common-props
-    container_name: s3proxy_minio
-    image: minio/minio:RELEASE.2025-02-07T23-21-09Z@sha256:640c22768ed5dbc92eacc14502a1b06a1c708fa60431345c78dfc22917062e93
+    hostname: minio
+    image: chrislusf/seaweedfs:4.39@sha256:c7d6c721b30ae711db766bbbfd40192776e263d4e51e22f57baef7bef93c12c6
+    command: server -dir=/data -master -s3 -ip=minio -s3.config=/etc/seaweedfs/s3.json
     ports:
-    - 127.0.0.1:9000:9000
-    - 127.0.0.1:9001:9001
+    - 127.0.0.1:9000:8333
+    - 127.0.0.1:19333:9333
     volumes:
     - s3proxy_minio:/data
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin # pragma: allowlist secret
-    command: server --console-address ":9001" /data
+    - ./seaweedfs-primary-s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      test: [CMD, curl, -sf, http://localhost:9000/minio/health/ready]
+      test: [CMD, curl, -sf, http://localhost:8333/]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 12
       start_period: 5s
 
   minio-init:
     <<: *common-props
     restart: no
-    # See https://hub.docker.com/r/minio/mc/tags
-    image: minio/mc:RELEASE.2025-02-08T19-14-21Z@sha256:5e8d8a62846797a34d1aaaafe9d9bebe75ac71229063383eadc497bd0e3f6317
+    image: amazon/aws-cli:2.37.9@sha256:92de75724b6a746951f0e8b915d86bbccd7cb55aff96cd0cb4f7017272160780
     environment:
       MINIO_BUCKET: ${MINIO_BUCKET:?MINIO_BUCKET is required}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      AWS_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: 'true'
     entrypoint:
     - /bin/sh
     - -c
     - |
       set -e;
-      until /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin 2>/dev/null; do echo 'waiting for minio...'; sleep 2; done;
-      /usr/bin/mc rb --force "minio/$${MINIO_BUCKET}" || true;
-      /usr/bin/mc mb "minio/$${MINIO_BUCKET}";
-      /usr/bin/mc anonymous set download "minio/$${MINIO_BUCKET}";
-      /usr/bin/mc admin user svcacct add minio minioadmin --access-key "$${MINIO_ACCESS_KEY}" --secret-key "$${MINIO_SECRET_KEY}" || true;
-      /usr/bin/mc admin user svcacct list minio minioadmin;
+      until aws --endpoint-url http://minio:8333 s3 ls 2>/dev/null; do echo 'waiting for primary S3...'; sleep 2; done;
+      aws --endpoint-url http://minio:8333 s3 rb "s3://$${MINIO_BUCKET}" --force || true;
+      aws --endpoint-url http://minio:8333 s3 mb "s3://$${MINIO_BUCKET}";
+      aws --endpoint-url http://minio:8333 s3 ls "s3://$${MINIO_BUCKET}";
       exit 0;
     depends_on:
       minio:
@@ -51,7 +50,6 @@ services:
 
   seaweedfs:
     <<: *common-props
-    container_name: s3proxy_seaweedfs
     hostname: seaweedfs
     image: chrislusf/seaweedfs:4.39@sha256:c7d6c721b30ae711db766bbbfd40192776e263d4e51e22f57baef7bef93c12c6
     # `-s3.config=/etc/seaweedfs/s3.json` enables SeaweedFS S3 identity-based
@@ -77,25 +75,27 @@ services:
     - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
 
   # SeaweedFS S3 endpoint listens on :8333 inside the network and defaults to
-  # anonymous access. We create a bucket via `mc` so integration tests have a
-  # stable target bucket. If you later configure identity-based SeaweedFS S3,
-  # add the access key / secret via `mc admin user svcacct add` here.
+  # anonymous access. We create a bucket via aws-cli so integration tests have a
+  # stable target bucket.
   seaweedfs-init:
     <<: *common-props
     restart: no
-    image: minio/mc:RELEASE.2025-02-08T19-14-21Z@sha256:5e8d8a62846797a34d1aaaafe9d9bebe75ac71229063383eadc497bd0e3f6317
+    image: amazon/aws-cli:2.37.9@sha256:92de75724b6a746951f0e8b915d86bbccd7cb55aff96cd0cb4f7017272160780
     environment:
       SEAWEEDFS_BUCKET: ${SEAWEEDFS_BUCKET:?SEAWEEDFS_BUCKET is required}
+      AWS_ACCESS_KEY_ID: anonymous
+      AWS_SECRET_ACCESS_KEY: anonymous # pragma: allowlist secret
+      AWS_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: 'true'
     entrypoint:
     - /bin/sh
     - -c
     - |
       set -e;
-      until /usr/bin/mc config host add weed http://seaweedfs:8333 anonymous anonymous 2>/dev/null; do echo 'waiting for seaweedfs S3...'; sleep 2; done;
-      /usr/bin/mc rb --force "weed/$${SEAWEEDFS_BUCKET}" || true;
-      /usr/bin/mc mb "weed/$${SEAWEEDFS_BUCKET}";
-      /usr/bin/mc anonymous set download "weed/$${SEAWEEDFS_BUCKET}";
-      /usr/bin/mc ls weed/;
+      until aws --endpoint-url http://seaweedfs:8333 s3 ls 2>/dev/null; do echo 'waiting for seaweedfs S3...'; sleep 2; done;
+      aws --endpoint-url http://seaweedfs:8333 s3 rb "s3://$${SEAWEEDFS_BUCKET}" --force || true;
+      aws --endpoint-url http://seaweedfs:8333 s3 mb "s3://$${SEAWEEDFS_BUCKET}";
+      aws --endpoint-url http://seaweedfs:8333 s3 ls;
       exit 0;
     depends_on:
       seaweedfs:
@@ -103,7 +103,6 @@ services:
 
   azurite:
     <<: *common-props
-    container_name: s3proxy_azurite
     # See https://github.com/Azure/Azurite/tags
     image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
     restart: always
@@ -120,7 +119,6 @@ services:
   # See https://hub.docker.com/r/fsouza/fake-gcs-server/tags
   fake-gcs-server:
     <<: *common-props
-    container_name: s3proxy_fake_gcs_server
     image: fsouza/fake-gcs-server:1.54.0@sha256:3730da0e31f7e5186a90ec4899dc2c336104e7599df400411392ef17e684c31f
     restart: always
     ports:
@@ -140,7 +138,6 @@ services:
 
   s3-error:
     <<: *common-props
-    container_name: s3proxy_s3_error
     image: python:3.13-alpine@sha256:540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d
     restart: always
     ports:

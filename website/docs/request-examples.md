@@ -80,6 +80,12 @@ aws --endpoint-url "$S3_ENDPOINT" s3api list-objects-v2 \
 
 In v1, `ListObjectsV2` always comes from one effective backend. The proxy does not merge pagination across multiple destinations.
 
+List filters and keys use the visible namespace for supported prefix rewrites.
+Pass SDK-returned keys directly to GetObject; for raw HTTP, apply normal path
+escaping. Continuation tokens are opaque and must be passed unchanged to the
+next request. Use a fixed backend for stable pages: random selection or failover
+can change the backend and invalidate its token. See the [listing contract](api-reference.md#listobjectsv2).
+
 ## Head A Bucket
 
 ```sh
@@ -103,9 +109,13 @@ Authorization: AWS4-HMAC-SHA256 ...
 
 Multipart upload operations are not implemented in v1. `CopyObject` is also rejected.
 
+AWS streaming upload envelopes are also unsupported. `Content-Encoding: aws-chunked`, a `STREAMING-` payload hash, or a nonempty `X-Amz-Trailer` declaration returns `501 NotImplemented` before authentication or body reads. Streaming hash sentinels previously failed authentication; they now receive this format-specific 501. Use a client/request mode that sends ordinary single-request object bytes, and inspect the actual request metadata when diagnosing a 501. Do not remove framing headers while retaining an encoded AWS envelope. Ordinary HTTP transfer chunking and gzip-encoded objects remain supported; see [request payload formats](api-reference.md#request-payload-formats) for exact detection and precedence.
+
 S3 subresource query operations are rejected before route dispatch unless they are part of the documented supported query surface. Examples include `?acl`, `?tagging`, `?retention`, `?legal-hold`, `?versionId=...`, `?restore`, `?select`, response header overrides, and multipart query variants such as `?uploads` and `?uploadId=...`.
 
-The proxy returns an S3-compatible `NotImplemented` error for those requests instead of attempting partial support.
+Well-formed unsupported queries return `501 NotImplemented` after applicable authentication checks. Malformed query strings, such as `?versionId=%GG` or `?tagging=;value`, instead return `400 InvalidRequest` before authentication or request-body reads. Encode literal semicolons as `%3B` and literal percent signs as `%25`; valid encoding does not enable unsupported operations.
+
+The proxy returns an S3-compatible `NotImplemented` error for well-formed unsupported operations instead of attempting partial support.
 
 ## Behavior Notes
 

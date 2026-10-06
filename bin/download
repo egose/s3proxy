@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/semver.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/semver.sh"
+
 tool_name="s3proxy"
 
 github_coordinates="${ASDF_S3PROXY_GITHUB_REPOSITORY:-egose/s3proxy}"
@@ -9,7 +12,7 @@ base_download_url="https://github.com/${github_coordinates}/releases/download"
 version="$ASDF_INSTALL_VERSION"
 download_path="$ASDF_DOWNLOAD_PATH"
 
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
+semver_valid "$version" || {
   echo "Invalid version: $version" >&2
   exit 1
 }
