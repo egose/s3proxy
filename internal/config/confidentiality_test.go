@@ -11,12 +11,12 @@ import (
 
 func TestEnvDiagnosticConfidentiality(t *testing.T) {
 	const expr = `env("S3PROXY_DIAGNOSTIC_VALUE")`
-	const secret = "private\"quoted\n\\雪"
+	const secret = "private\"quoted\n\\雪" // pragma: allowlist secret
 	for _, tc := range []struct {
 		name, old, replacement, value, block, field, cause string
 	}{
 		{"endpoint userinfo", `"https://minio-a.internal"`, expr, "https://user:" + secret + "@example.test/%GG", `target.s3 "primary"`, "endpoint", "URL"},
-		{"endpoint escape", `"https://minio-a.internal"`, expr, "https://user:private-password@example.test/%GG?private-query", `target.s3 "primary"`, "endpoint", "escape"},
+		{"endpoint escape", `"https://minio-a.internal"`, expr, "https://user:private-password@example.test/%GG?private-query", `target.s3 "primary"`, "endpoint", "escape"}, // pragma: allowlist secret
 		{"endpoint port", `"https://minio-a.internal"`, expr, "https://example.test:private-port/", `target.s3 "primary"`, "endpoint", "port"},
 		{"endpoint host", `"https://minio-a.internal"`, expr, "https://private-host%00.example.test/", `target.s3 "primary"`, "endpoint", "escape"},
 		{"endpoint query", `"https://minio-a.internal"`, expr, "https://example.test/?private-query\n", `target.s3 "primary"`, "endpoint", "URL"},
@@ -92,7 +92,7 @@ func assertConfidentialError(t *testing.T, err error, values ...string) {
 func TestEnvCompileDiagnosticSourceLocation(t *testing.T) {
 	for _, tc := range []struct{ name, old, value, position string }{
 		{"timeout", `"5s"`, "private-duration", "47,22-"},
-		{"endpoint", `"https://minio-a.internal"`, "https://user:private-password@example.test/%GG", "44,22-"},
+		{"endpoint", `"https://minio-a.internal"`, "https://user:private-password@example.test/%GG", "44,22-"}, // pragma: allowlist secret
 		{"pattern", `"^tenant-(?P<tenant>[a-z0-9-]+)-logs$"`, "(?P<private\"name>x)", "56,13-"},
 		{"read", `"30s"`, "private-duration", "16,19-"},
 	} {

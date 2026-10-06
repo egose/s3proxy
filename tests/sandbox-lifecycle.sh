@@ -8,7 +8,7 @@ mkdir -p "$tmp/repo/scripts" "$tmp/repo/sandbox" "$tmp/bin" "$tmp/state"
 cp "$root/Makefile" "$tmp/repo/"
 cp "$root/scripts/run-integration.sh" "$root/scripts/sandbox-compose.sh" "$tmp/repo/scripts/"
 cp "$root/sandbox/docker-compose.yml" "$tmp/repo/sandbox/"
-printf 'COMPOSE_PROJECT_NAME=sandbox\nSANDBOX_PROJECT_NAME=s3proxy-dotenv\nSANDBOX_COMPOSE=/must-not-run\nTEST_CREDENTIAL=loaded\n' >"$tmp/repo/.env"
+printf 'COMPOSE_PROJECT_NAME=sandbox\nSANDBOX_PROJECT_NAME=s3proxy-dotenv\nSANDBOX_COMPOSE=/must-not-run\nTEST_CREDENTIAL=loaded\n' >"$tmp/repo/.env" # pragma: allowlist secret
 
 cat >"$tmp/bin/fake-compose" <<'EOF'
 #!/usr/bin/env bash

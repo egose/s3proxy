@@ -202,7 +202,7 @@ func assertExampleContract(t *testing.T, rt *config.Runtime) {
 	}
 	client := rt.Auth.Clients["local"]
 	target := rt.Targets["primary"]
-	if client.AccessKey != "synthetic-client-access" || client.SecretKey != "synthetic-client-secret" || target.Credentials.AccessKey != "synthetic-backend-access" || target.Credentials.SecretKey != "synthetic-backend-secret" || target.Region != "us-east-1" || !target.ForcePathStyle || target.Timeout != 2*time.Minute {
+	if client.AccessKey != "synthetic-client-access" || client.SecretKey != "synthetic-client-secret" || target.Credentials.AccessKey != "synthetic-backend-access" || target.Credentials.SecretKey != "synthetic-backend-secret" || target.Region != "us-east-1" || !target.ForcePathStyle || target.Timeout != 2*time.Minute { // pragma: allowlist secret
 		t.Fatal("separate credentials or documented target settings changed")
 	}
 	ops := []string{"GetObject", "HeadObject", "PutObject", "DeleteObject", "HeadBucket", "ListObjectsV2", "ListBuckets"}
