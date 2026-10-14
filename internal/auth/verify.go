@@ -319,13 +319,13 @@ func (v *sigV4Verifier) checkDateSkew(amzDate string) error {
 func (v *sigV4Verifier) checkPresignWindow(expiresRaw, amzDate string) error {
 	expiresSeconds, err := strconv.ParseInt(expiresRaw, 10, 64)
 	if err != nil {
-		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)
+		return errInvalidExpires
 	}
 	if expiresSeconds < 0 {
-		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)
+		return errInvalidExpires
 	}
 	if expiresSeconds > int64(maxPresignTTL/time.Second) {
-		return fmt.Errorf("%w: %q", errInvalidExpires, expiresRaw)
+		return errInvalidExpires
 	}
 	signedAt, err := parseAmzDateE(amzDate)
 	if err != nil {
@@ -347,7 +347,11 @@ func parseAmzDate(s string) time.Time {
 }
 
 func parseAmzDateE(s string) (time.Time, error) {
-	return time.Parse("20060102T150405Z", s)
+	t, err := time.Parse("20060102T150405Z", s)
+	if err != nil {
+		return time.Time{}, errInvalidDate
+	}
+	return t, nil
 }
 
 func validateScope(scope, date string) (string, error) {
@@ -506,6 +510,7 @@ var (
 	errRequestExpired            = AuthError("request timestamp outside allowed skew")
 	errPresignExpired            = AuthError("presigned request has expired")
 	errMissingDate               = AuthError("missing X-Amz-Date")
+	errInvalidDate               = AuthError("invalid X-Amz-Date")
 	errUnsignedDate              = AuthError("X-Amz-Date must be signed")
 	errInvalidPayloadHash        = AuthError("invalid X-Amz-Content-Sha256")
 	errUnsignedPayloadHash       = AuthError("X-Amz-Content-Sha256 must be signed")

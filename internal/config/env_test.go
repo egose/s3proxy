@@ -30,7 +30,7 @@ func TestLoadFile_EnvLiteralValues(t *testing.T) {
 				if err != nil {
 					t.Fatalf("LoadFile with %s: %v", expr, err)
 				}
-				if rt.Auth.Clients["ci"].SecretKey != value || rt.Targets["primary"].Credentials.SecretKey != value { // pragma: allowlist secret
+				if rt.Auth.Clients["ci"].SecretKey != value || rt.Targets["primary"].Credentials.SecretKey != value {
 					t.Fatal("environment value was not preserved literally in both credentials")
 				}
 			}
@@ -107,7 +107,7 @@ func TestLoadFile_EnvDiagnosticsKeepSourceLocation(t *testing.T) {
 }
 
 func TestLoadFile_EnvErrorsDoNotExposeSecrets(t *testing.T) {
-	const secret = "S3PROXY_SENTINEL_SECRET" // pragma: allowlist secret
+	const secret = "S3PROXY_SENTINEL_SECRET"
 	t.Setenv("S3PROXY_TEST_SECRET", "${"+secret+"}")
 	base := strings.ReplaceAll(exampleConfig, `"secretprimary"`, `env("S3PROXY_TEST_SECRET")`)
 	for _, tc := range []struct {

@@ -10,7 +10,7 @@ import (
 func TestParse(t *testing.T) {
 	for _, raw := range []string{
 		"list-type=2&prefix=SECRET%GG", "prefix=valid&prefix=SECRET%", "SECRET%2=value",
-		"SECRET%XZ=value", "tagging=;SECRET", "tagging;SECRET=value", "x=ok&x=SECRET%GG&y=valid", // pragma: allowlist secret
+		"SECRET%XZ=value", "tagging=;SECRET", "tagging;SECRET=value", "x=ok&x=SECRET%GG&y=valid",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			values, err := Parse(raw)

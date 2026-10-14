@@ -1,6 +1,7 @@
 package listbuckets
 
 import (
+	"slices"
 	"sort"
 	"time"
 
@@ -22,6 +23,9 @@ func New(buckets []config.VirtualBucket, startupTime time.Time) Service {
 	for _, bucket := range buckets {
 		views = append(views, BucketView{Name: bucket.VisibleName, CreationDate: startupTime})
 	}
+	sort.Slice(views, func(i, j int) bool {
+		return views[i].Name < views[j].Name
+	})
 	return &service{
 		buckets: views,
 	}
@@ -32,27 +36,28 @@ type service struct {
 }
 
 func (s *service) List(principal *auth.Principal) []BucketView {
+	if len(s.buckets) == 0 {
+		return nil
+	}
+	if principal == nil || slices.Contains(principal.VisibleBuckets, "*") {
+		return append([]BucketView(nil), s.buckets...)
+	}
+	if len(principal.VisibleBuckets) == 0 {
+		return nil
+	}
+	visible := make(map[string]struct{}, len(principal.VisibleBuckets))
+	for _, name := range principal.VisibleBuckets {
+		visible[name] = struct{}{}
+	}
 	var views []BucketView
 	for _, b := range s.buckets {
-		if !isVisible(principal, b.Name) {
+		if _, ok := visible[b.Name]; !ok {
 			continue
+		}
+		if views == nil {
+			views = make([]BucketView, 0, min(len(s.buckets), len(visible)))
 		}
 		views = append(views, b)
 	}
-	sort.Slice(views, func(i, j int) bool {
-		return views[i].Name < views[j].Name
-	})
 	return views
-}
-
-func isVisible(p *auth.Principal, visibleName string) bool {
-	if p == nil {
-		return true
-	}
-	for _, v := range p.VisibleBuckets {
-		if v == "*" || v == visibleName {
-			return true
-		}
-	}
-	return false
 }

@@ -84,7 +84,7 @@ func Classify(ctx *requestctx.Context) (Operation, error) {
 		if ctx.Key == "" {
 			return OpUnknown, nil
 		}
-		if ctx.Headers.Get("x-amz-copy-source") != "" {
+		if hasHeader(ctx.Headers, "X-Amz-Copy-Source") {
 			return OpCopyObject, nil
 		}
 		if ctx.Query.Has("uploads") {
@@ -149,6 +149,15 @@ func isInboundAuthQueryParam(name string) bool {
 	}
 }
 
+func hasHeader(headers http.Header, name string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsMultipart(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -159,10 +168,7 @@ func IsMultipart(r *http.Request) bool {
 	if _, ok := r.URL.Query()["uploads"]; ok {
 		return true
 	}
-	if r.Header.Get("x-amz-multipart-upload-id") != "" {
-		return true
-	}
-	return false
+	return hasHeader(r.Header, "X-Amz-Multipart-Upload-Id")
 }
 
 func IsRead(op Operation) bool {

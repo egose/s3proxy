@@ -31,7 +31,7 @@ func TestValidate(t *testing.T) {
 		{"encoding substrings", http.Header{"Content-Encoding": {"not-aws-chunked, aws-chunked-extra, xaws-chunked"}}, false},
 		{"encoding is token not parameter", http.Header{"Content-Encoding": {"aws-chunked;foo=bar", "\"aws-chunked\""}}, false},
 		{"empty trailer", http.Header{"X-Amz-Trailer": {"", " \t "}}, false},
-		{"ordinary hash", http.Header{"X-Amz-Content-Sha256": {"UNSIGNED-PAYLOAD", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}, false}, // pragma: allowlist secret
+		{"ordinary hash", http.Header{"X-Amz-Content-Sha256": {"UNSIGNED-PAYLOAD", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}, false},
 		{"hash substrings", http.Header{"X-Amz-Content-Sha256": {"NOT-STREAMING-PAYLOAD", "STREAMING"}}, false},
 		{"ordinary chunking checksums", http.Header{"Transfer-Encoding": {"chunked"}, "X-Amz-Checksum-Crc32": {"AAAAAA=="}, "X-Amz-Decoded-Content-Length": {"5"}}, false},
 		{"header name substring", http.Header{"X-Content-Encoding": {"aws-chunked"}, "X-Amz-Trailer-Other": {"SECRET"}}, false},

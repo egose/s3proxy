@@ -904,7 +904,7 @@ func TestHandler_SingleTargetTransportFailureLogsOneSafeDestinationFailure(t *te
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	transportErr := &url.Error{
 		Op:  "Get",
-		URL: "http://user:pass@upstream.local/private-bucket/secret-object?token=sentinel-query-value", // pragma: allowlist secret
+		URL: "http://user:pass@upstream.local/private-bucket/secret-object?token=sentinel-query-value",
 		Err: errors.New("dial tcp connection refused"),
 	}
 	h := NewHandler(Dependencies{

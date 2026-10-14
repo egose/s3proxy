@@ -138,7 +138,7 @@ auth "main" {
 
 credential "static" "primary" {
   access_key = "access"
-  secret_key = "secret" // pragma: allowlist secret
+  secret_key = "secret"
 }
 
 target "s3" "primary" {

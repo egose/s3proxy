@@ -130,7 +130,7 @@ func TestHandler_ResponseTransferHTTP(t *testing.T) {
 						if body.closeErr != nil && (!strings.Contains(text, "response cleanup failed") || !strings.Contains(text, "close failed")) {
 							t.Errorf("missing cleanup failure telemetry: %q", text)
 						}
-						for _, secret := range []string{"user:password", "private-bucket", "private-key", "private-token"} { // pragma: allowlist secret
+						for _, secret := range []string{"user:password", "private-bucket", "private-key", "private-token"} {
 							if strings.Contains(text, secret) {
 								t.Errorf("logs expose %q: %q", secret, text)
 							}

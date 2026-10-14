@@ -115,7 +115,22 @@ Request-derived query audit: auth and handler query consumers reuse validated va
 
 Inbound SigV4 presign query keys are accepted for authentication and stripped before outbound signing. Every other query-key combination is unsupported and must be rejected before route dispatch, including ACL, tagging, retention, legal-hold, torrent, versioning and version IDs, restore, select, response-header overrides, and multipart query variants.
 
-Multipart-related operations are explicitly unsupported in v1 and should return an S3-compatible `NotImplemented` error.
+CopyObject and multipart-related operations are explicitly unsupported in v1 and
+return an S3-compatible `501 NotImplemented` error. The shared `s3ops` boundary
+detects `X-Amz-Copy-Source` on PUT and `X-Amz-Multipart-Upload-Id` on any S3 request
+by case-insensitive header-name presence, regardless of values. Empty,
+whitespace-only, repeated (including empty-first), and noncanonical direct-caller
+header maps all count, including keys with nil or empty value slices. Ordinary
+uploads must omit these selectors entirely; an empty value is not an opt-out.
+
+The HTTP handler records classification and multipart detection before
+authentication can filter unsigned headers, retaining the observed unsupported
+state afterward. Rejection still follows authentication for supplied signatures:
+invalid signatures keep their authentication error, and explicit payload hashes
+are verified in the existing signature-then-body order. Strict query and streaming
+payload checks keep their earlier precedence. Unsupported selectors are rejected
+before routing or dispatch-related replay; the direct backend executor uses the
+same detection before source-body preparation, `GetBody`, signing, or network I/O.
 
 ## Authentication And Authorization
 
@@ -135,6 +150,26 @@ No inbound authentication is performed. This mode is intended for trusted deploy
 The proxy validates the inbound S3 SigV4 signature using statically configured client credentials from HCL.
 
 This mode does not require a database.
+
+Malformed header or presigned `X-Amz-Date` values and invalid presigned
+`X-Amz-Expires` values return fixed `AuthError` causes: `invalid X-Amz-Date` and
+`invalid X-Amz-Expires`. The authentication parser discards value-bearing time and
+integer parse errors, including overflow inputs, rather than wrapping them or
+redacting only the top-level message. Returned errors and their unwrap chains
+therefore retain useful `errors.Is` categories without retaining the rejected
+values. The handler logs these categories in `auth failed` records and returns
+the existing `403 AccessDenied` XML; request completion still records request ID,
+method, status, response bytes, and duration.
+
+Timestamp parsing, signature canonicalization, and validation order are preserved.
+Header timestamps allow an inclusive 15-minute skew in either direction.
+Presigned expiry remains an integer from zero through 604800 seconds (seven days),
+with signing timestamps at most 15 minutes in the future. A request is expired
+only when verification time is strictly after signing time plus expiry. Zero
+expiry thus remains valid at the signing instant, and before it within the
+future-skew allowance, but expires even one nanosecond afterward. Invalid date or
+expiry inputs fail before signature/body verification, routing, or backend I/O;
+valid signatures still precede explicit payload-hash verification.
 
 ### S3 Signature Canonicalization
 
@@ -209,6 +244,31 @@ Controls read target selection when a route has multiple destinations:
 
 In v1, reads always go to one effective backend only.
 
+`hash` computes SHA-256 over the original inbound bucket, a literal `/`, and the
+original raw key, before any rewrite. The first four digest bytes are decoded as
+an unsigned big-endian `uint32`; both that word and the positive destination
+count are widened to `uint64` before modulo. The remainder is below the native
+`int` destination count, so converting only the result to `int` is safe. This
+avoids signed overflow and the unnegatable signed minimum, without narrowing a
+64-bit destination count. The hash helper returns zero for counts at or below
+one; the resolver skips routes with no available destinations and directly
+selects a sole destination.
+
+The index addresses destinations in configured order, not target-registry order.
+No unescaping, escape-case folding, path normalization, or rewritten bucket/key
+enters the hash. All previous 64-bit mappings are preserved. Some mappings on
+older 386 and 32-bit ARM builds intentionally change because those builds folded
+high-bit words through signed arithmetic. For three destinations, `bucket/key3`
+(`ca7c2b99`) selects index 0, and `tenant-2/` (`f72858a6`) selects index 1 on every
+corrected architecture; old 32-bit builds selected 1 and 0 respectively.
+
+Mixed old-32-bit/corrected deployments can still disagree until rollout is
+consistent. Keep the algorithm and ordered destination configuration consistent
+across serving instances. This is read selection, not write sharding or data
+migration: ordinary writes still select the first destination, and configured
+`dispatch = "all"` still fans writes out. No stored objects or replica contents
+are changed by the correction.
+
 ### Failover Policy
 
 For `ordered_failover`, failover happens only on:
@@ -279,6 +339,20 @@ that violates this shape returns `400 InvalidRequest` with S3 XML (a HEAD
 response has no body on the wire). Template execution failures remain internal
 errors. No matched route is dispatched when a rewrite fails preflight.
 
+Object `key_template` execution failures return the fixed value-free error
+`key_template execution failed`. The rewrite engine discards the `text/template`
+execution error entirely, so error formatting and unwrap chains cannot retain
+template names, failing action literals, capture names, or environment-derived
+template contents. The HTTP `rewrite failed` record retains the public route
+name and request ID; the client receives generic `500 InternalError` XML.
+
+Successful compilation does not establish that a template can execute for every
+request. Use the route and request ID to locate the rule, then inspect the parser's
+named captures, capitalized template fields, and action argument types or indices
+privately. Reproduce with synthetic matching requests. Offline validation checks
+syntax and the restricted listing contract; runtime capture availability and
+action evaluation still depend on request data.
+
 The shared operation vocabulary defines outbound method/bucket/key validation.
 The backend executor repeats validation before reading or replaying a body,
 signing, or making an upstream call, and checks query/header classification
@@ -306,6 +380,36 @@ Each S3 target includes:
 - path-style option
 - transport settings
 - optional request timeout
+
+### Static Backend Session Credentials
+
+`credential "static"` accepts an optional `session_token` alongside the required
+access and secret keys. HCL literals and native `env()` results pass unchanged
+from `rawCredential` to `StaticCredential` and the selected target's
+`aws.Credentials.SessionToken`. An omitted or empty token retains long-lived key
+behavior. This is a backend credential field; the inbound `Client` schema and
+authentication lifecycle are separate.
+
+The executor owns a startup snapshot of its target registry. Credentials are
+string-valued structs copied with each target, so caller mutation or later
+environment changes cannot alter the selected target's credentials or another
+destination. There is no credential provider chain, STS call, issuance, automatic
+refresh, or expiry tracking. Operators replace the complete externally issued
+credential set and restart before expiry.
+
+Header/query filtering removes inbound `X-Amz-Security-Token` case-insensitively
+before signing a fresh outbound request. Only the selected target's configured
+token can be emitted. The existing AWS SDK v2 signer places it in the outbound
+security-token header and includes that header in SigV4 `SignedHeaders`.
+`UNSIGNED-PAYLOAD`, explicitly signed upload `Content-Length`, and S3 canonical
+path handling retain their existing contracts. No mutable credential state is
+shared between concurrent fan-out attempts or tokenless destinations.
+
+Credential fields stay outside topology and runtime log payloads; existing HCL
+diagnostic sanitization also applies to environment-derived token type errors.
+Local config/app HTTP workflows and direct executor captures verify token
+isolation and snapshots. The existing independent S3 signature oracle uses an
+explicit expected signed-header list and rejects token mutation or removal.
 
 ## Forwarding Behavior
 
@@ -399,10 +503,30 @@ overflow, aggregate exhaustion, cancellation, and source-close errors release th
 operation's reservations. Unknown-length readers returning `(0, nil)` 100 times
 consecutively fail with `io.ErrNoProgress`; positive progress resets that count.
 Cancellation closes a blocked source through the existing close-once path.
-Successful replay remains caller-owned: independent `GetBody` readers share
-immutable payload storage, `Reset` rewinds, and caller body closure, cancellation,
-or `replaybody.Release` releases accounting once. Already-acquired readers remain
-valid after release, so callers must retain their existing replay lifetime discipline.
+
+Successful replay remains caller-owned. Independent `GetBody` readers share
+immutable payload storage without owning the reservation. `Reset` rewinds by
+replacing the current body with such a reader; closing it does not end ownership.
+Closing the initially installed owning body, cancellation, or `replaybody.Release`
+returns accounting once. `Release` also ends ownership after `Reset` and clears
+the request's `Body` and `GetBody` hooks.
+
+Each nonempty payload initializes a release-notification channel before starting
+its cancellation watcher. The watcher selects between context cancellation and
+that notification. Once-only release returns the budget and closes the channel
+without waiting for the watcher, so immediate cancellation and explicit release
+can race without a registration gap or recursive `sync.Once` wait. Explicit
+release does not cancel the caller's context. The watcher can exit promptly even
+when a direct caller keeps that context alive; ordinary net/http request contexts
+already cancel when the handler returns.
+
+Release never clears or mutates the immutable payload bytes. Already-acquired
+readers and saved `GetBody` closures remain byte-valid after release or
+cancellation. Retaining these references, including a closed owning body, retains
+their storage intentionally. Once callers discard them, storage can be collected
+without waiting for context cancellation; an otherwise unnecessary watcher no
+longer extends its lifetime. Callers must still observe this replay lifetime
+discipline when interpreting the payload budget.
 
 ## Listing Semantics
 
@@ -419,6 +543,19 @@ This keeps the behavior:
 - predictable
 - secure
 - independent of backend-specific bucket visibility
+
+The `internal/listbuckets` service copies visible names and the supplied startup
+creation date into a private, lexicographically ordered snapshot at construction.
+Each discovery result is a caller-owned slice; configuration and principal policy
+slices retain their original contents and order. Nil principals and policies
+containing `*` receive a copy of the whole catalog. A nonnil principal with a nil
+or empty visibility policy receives no buckets. Explicit policies use a call-local
+name set to filter the ordered snapshot, with expected O(B + V) discovery work for
+B catalog buckets and V policy entries. Ordering is paid once at startup.
+
+Visibility depends on `visible_buckets`, independently of route permissions.
+Bucket `route` references serve configuration referential integrity; the HTTP
+handler separately checks the client's `ListBuckets` operation permission.
 
 ### `ListObjectsV2`
 
@@ -504,10 +641,14 @@ keys (even if they contain a backend prefix). Their query values are normally
 escaped on transmission. `random` may change backend on every page;
 `ordered_failover` may change backend on an error, including a failed listing
 transformation. Tokens may then be invalid or produce inconsistent pages.
-`first`, or `hash` with an unchanged destination list, keeps bucket listing
-selection stable; `hash` uses the original bucket and empty key, so later object
-reads can select another replica. Operators need equivalent replicas for that
-workflow. There is no backend affinity encoded in tokens.
+`first`, or `hash` with the same ordered destination configuration and corrected
+algorithm on every serving instance, keeps bucket listing selection stable.
+`hash` uses the original bucket and empty key, ignoring list filters and tokens,
+so later object reads can select another replica. Operators need equivalent
+replicas for that workflow. Replacing old 32-bit hash instances or changing
+destinations can change the backend between pages. Complete pagination with
+stable routing before that change, or restart affected listings after rollout.
+There is no proxy-managed backend affinity encoded in tokens.
 
 The proxy does not merge list results or pagination state across multiple backends in v1.
 
@@ -801,6 +942,29 @@ no DNS naming policy. No resolution, service lookup, interface inspection, or
 binding occurs here. Service existence, hostname/zone resolution, address ownership,
 permissions, and port availability remain runtime checks. Valid occupied or
 unavailable addresses must continue to pass `validate` and `routes` offline.
+
+Target endpoints are checked at the same shared `config.Validate` boundary
+against the components consumed by `buildTargetURL`: an absolute, hierarchical
+HTTP(S) URL with a nonempty hostname, optional decimal port in `0`–`65535`, and
+optional escaped base path. Userinfo, query (including `ForceQuery` for a bare
+`?`), fragment, and opaque forms are rejected rather than silently discarded.
+Both parsed fragment fields and the original `Endpoint` string are checked:
+Go's parsed URL does not retain an empty `#` delimiter. Literal `%3F`/`%23` path
+escapes remain valid. Credentials belong to the separate referenced static
+credential block, never endpoint userinfo.
+
+Reparsing `EndpointURL.String()` applies Go's URL syntax rules to direct runtime
+callers as well as loaded HCL. URL parser causes and numeric-overflow errors are
+discarded; diagnostics retain only public target labels, the endpoint field,
+and fixed useful categories. Validation does not rewrite either endpoint form.
+DNS/IPv4 targets keep both addressing modes. Bracketed IPv6 targets, including
+zones and IPv4-mapped addresses, require `force_path_style = true` because the
+virtual-hosted builder cannot prefix a bucket to that authority. Optional/empty
+ports, leading decimal zeros, and escaped base paths retain their behavior.
+No additional DNS naming policy, resolution, interface checks, bind attempts,
+or backend calls are introduced. These configuration failures precede CLI
+success/topology output and app startup logs. Migration removes formerly ignored
+components, corrects malformed hosts/ports, and selects path-style for IPv6.
 
 ## CLI Design
 

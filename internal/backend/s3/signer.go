@@ -19,6 +19,7 @@ func signRequest(req *http.Request, target config.S3Target) error {
 	creds := aws.Credentials{
 		AccessKeyID:     target.Credentials.AccessKey,
 		SecretAccessKey: target.Credentials.SecretKey,
+		SessionToken:    target.Credentials.SessionToken,
 	}
 
 	if req.Header.Get("X-Amz-Content-Sha256") == "" {

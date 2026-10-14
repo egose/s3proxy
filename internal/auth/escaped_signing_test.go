@@ -44,7 +44,7 @@ func TestSigV4Static_S3EscapedKeys(t *testing.T) {
 					}
 					t.Run(mutation, func(t *testing.T) {
 						const body = "payload"
-						const hash = "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5" // pragma: allowlist secret
+						const hash = "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"
 						r := httptest.NewRequest(http.MethodPut, "https://proxy.example.com"+path, strings.NewReader(body))
 						defer replaybody.Release(r)
 						r.Header.Set("Content-Length", "7")

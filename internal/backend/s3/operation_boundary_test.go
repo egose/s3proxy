@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/egose/s3proxy/internal/config"
+	"github.com/egose/s3proxy/internal/replaybody"
 	"github.com/egose/s3proxy/internal/requestctx"
 	"github.com/egose/s3proxy/internal/rewrite"
 	"github.com/egose/s3proxy/internal/s3ops"
@@ -103,6 +105,106 @@ func TestClientDo_RejectsMalformedSourceBeforeIO(t *testing.T) {
 			}
 			if body.reads != 0 {
 				t.Fatalf("body reads = %d, want 0", body.reads)
+			}
+		})
+	}
+}
+
+func TestClientDo_RejectsOperationHeadersBeforeIO(t *testing.T) {
+	for _, selector := range []struct {
+		name, header, method string
+		op                   s3ops.Operation
+	}{
+		{"copy", "X-Amz-Copy-Source", http.MethodPut, s3ops.OpPutObject},
+		{"multipart write", "X-Amz-Multipart-Upload-Id", http.MethodPut, s3ops.OpPutObject},
+		{"multipart read", "X-Amz-Multipart-Upload-Id", http.MethodGet, s3ops.OpGetObject},
+		{"multipart delete", "X-Amz-Multipart-Upload-Id", http.MethodDelete, s3ops.OpDeleteObject},
+	} {
+		for _, tt := range []struct {
+			name    string
+			headers http.Header
+		}{
+			{"nonempty", http.Header{selector.header: {"selector"}}},
+			{"empty first", http.Header{selector.header: {"", "selector"}}},
+			{"nonempty third", http.Header{selector.header: {"", "", "selector"}}},
+			{"empty only", http.Header{selector.header: {""}}},
+			{"whitespace only", http.Header{selector.header: {" \t "}}},
+			{"duplicate empty", http.Header{selector.header: {"", ""}}},
+			{"duplicate nonempty", http.Header{selector.header: {"one", "two"}}},
+			{"lowercase", http.Header{strings.ToLower(selector.header): {"selector"}}},
+			{"mixed case", http.Header{strings.Replace(selector.header, "Amz", "aMZ", 1): {"", "selector"}}},
+			{"multiple casings", http.Header{selector.header: {""}, strings.ToLower(selector.header): {"selector"}}},
+			{"nil values", http.Header{selector.header: nil}},
+			{"no values", http.Header{selector.header: {}}},
+		} {
+			for _, getBody := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/getBody=%t", selector.name, tt.name, getBody), func(t *testing.T) {
+					calls := 0
+					budget := testBudget()
+					client := newTestClient(t, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+						calls++
+						if r.Body != nil {
+							_, _ = io.Copy(io.Discard, r.Body)
+							_ = r.Body.Close()
+						}
+						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+					})}, testTargets(t, "https://s3.local"), budget)
+					body := &observedBody{}
+					src := httptest.NewRequest(selector.method, "/bucket/key", body)
+					src.Header, src.ContentLength = tt.headers.Clone(), -1
+					getCalls := 0
+					if getBody {
+						src.GetBody = func() (io.ReadCloser, error) {
+							getCalls++
+							return body, nil
+						}
+					}
+					defer replaybody.Release(src)
+					resp, err := client.Do(context.Background(), Request{Operation: selector.op, Target: "primary", Bucket: "bucket", Key: "key", Source: src})
+					if resp != nil && resp.Body != nil {
+						resp.Body.Close()
+					}
+					if err == nil || resp != nil {
+						t.Errorf("expected controlled rejection, error = %v, response present = %t", err, resp != nil)
+					}
+					if body.reads != 0 || getCalls != 0 || calls != 0 || budget.Used() != 0 {
+						t.Errorf("reads/GetBody/transport/budget = %d/%d/%d/%d, want all zero", body.reads, getCalls, calls, budget.Used())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestClientDo_OrdinaryPutWithoutOperationHeaders(t *testing.T) {
+	stored := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		stored <- string(data)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.Client(), testTargets(t, server.URL), testBudget())
+	for name, headers := range map[string]http.Header{
+		"absent":   {},
+		"ordinary": {"X-Amz-Meta-Owner": {"client"}, "X-Amz-Copy-Source-Suffix": {"metadata"}, "X-Amz-Multipart-Upload-Id-Suffix": {"metadata"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("ordinary object"))
+			src.Header = headers.Clone()
+			resp, err := client.Do(context.Background(), Request{Operation: s3ops.OpPutObject, Target: "primary", Bucket: "bucket", Key: "key", Source: src})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if got := <-stored; got != "ordinary object" {
+				t.Fatalf("stored = %q, want ordinary object", got)
 			}
 		})
 	}

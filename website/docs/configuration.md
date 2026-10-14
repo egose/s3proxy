@@ -209,12 +209,37 @@ Backend credentials are defined separately from auth clients:
 
 ```hcl
 credential "static" "primary" {
-  access_key = env("S3PROXY_TARGET_PRIMARY_ACCESS_KEY")
-  secret_key = env("S3PROXY_TARGET_PRIMARY_SECRET_KEY")
+  access_key    = env("S3PROXY_TARGET_PRIMARY_ACCESS_KEY")
+  secret_key    = env("S3PROXY_TARGET_PRIMARY_SECRET_KEY")
+  session_token = env("S3PROXY_TARGET_PRIMARY_SESSION_TOKEN")
 }
 ```
 
-Only `credential "static" ...` is supported in v1.
+Only `credential "static" ...` is supported in v1. Its fields are:
+
+- `access_key`: required, nonempty string
+- `secret_key`: required, nonempty string
+- `session_token`: optional string for externally issued temporary backend
+  credentials, such as an AWS STS access key / secret key / session token set
+
+Tokens can be literal strings or `env()` results and are loaded unchanged.
+Omitting `session_token`, setting it to `""`, or referencing an unset/empty
+environment variable preserves long-lived key behavior: no token is sent.
+The example's token variable is therefore optional for long-lived keys.
+
+The selected target uses only the credentials from its referenced block. A
+configured token is sent in `X-Amz-Security-Token` and included in outbound SigV4
+signed headers. Inbound token headers and presign query parameters are stripped
+before outbound signing; they cannot replace a configured token or reach a
+tokenless or different target. `session_token` is backend-only and is not a field
+in an auth `client` block.
+
+`static` means a startup snapshot, including environment-derived values. There
+are no STS calls, ambient AWS credential discovery, automatic refresh, or expiry
+tracking. Obtain replacement credentials externally, replace the complete set,
+and restart before expiry. Updating the config or environment does not refresh
+a running process. Offline validation checks configuration, not credential
+validity or expiry; see [temporary backend credentials](operations.md#temporary-backend-credentials).
 
 ## Targets
 
@@ -241,6 +266,46 @@ Supported fields:
 Only `target "s3" ...` is supported in v1.
 
 `endpoint`, `region`, and `credentials` are required. The endpoint must be an absolute `http` or `https` URL, and the credential reference must exist. `force_path_style` defaults to `false`, which uses virtual-hosted outbound addressing. An omitted or zero `timeout` adds no whole-request target deadline; a positive value covers the complete upstream exchange, including streaming the response body. The shared upstream transport separately uses a 10-second dial timeout, 10-second TLS handshake timeout, and 30-second response-header timeout.
+
+### Endpoint URL Validation
+
+An endpoint must use hierarchical HTTP(S) URL syntax with a nonempty hostname,
+an optional port, and an optional base path. Supported examples include:
+
+- DNS: `https://storage.example.com` or `https://storage.example.com:9000/base%2Fpath`
+- IPv4: `http://192.0.2.1:9000/base%20path`
+- IPv6 with `force_path_style = true`: `http://[2001:db8::1]:9000/base%20path`
+- Scoped IPv6 with `force_path_style = true`: `http://[fe80::1%25eth0]:9000`
+
+Ports must be decimal numbers in `0`–`65535`; leading zeros are accepted. An
+omitted or empty port retains the HTTP(S) default. Named services and signed
+ports are not valid endpoint URL ports. IPv6 literals must be bracketed and
+use path-style addressing, including IPv4-mapped IPv6 and addresses with zones.
+The virtual-hosted builder prefixes the bucket to the hostname, which cannot
+represent a bracketed IPv6 target. Set `force_path_style = true`, or configure
+a DNS endpoint suitable for virtual-hosted bucket addressing.
+
+Userinfo (`user:password@`), queries (including an empty `?`), fragments
+(including an empty `#`), and opaque forms such as `https:storage` are unsupported.
+Escaped base paths are preserved, including encoded separators and literal
+question/hash characters (`%2F`, `%3F`, `%23`). These path bytes are not query or
+fragment components. Topology output omits the entire endpoint, including its path.
+
+**Compatibility change:** previously, forwarding silently discarded endpoint
+userinfo, query, and fragment components. Remove them from existing URLs;
+backend access and secret keys belong in a separate `credential "static"` block
+referenced by the target's `credentials` field. URL userinfo does not configure
+backend authentication. Correct empty hostnames and invalid/out-of-range ports,
+and enable path-style addressing for IPv6 targets before upgrading.
+
+Shared configuration validation applies to `validate`, `routes`, and `serve`.
+Invalid endpoints fail before success/topology output or runtime startup logging.
+Errors identify the target label and endpoint problem without including the URL,
+its component values, or underlying parser excerpts. Checks are syntax-only:
+no DNS or zone resolution, listener binding, or backend health calls occur.
+Syntactically valid unavailable endpoints and occupied ports still validate
+offline. Hostname naming policy and network allowlists are not added; actual
+resolution, connectivity, and backend credential validity remain runtime concerns.
 
 ## Parsers
 
@@ -308,6 +373,38 @@ Supported `read_preference` values:
 - `ordered_failover`
 
 `first` selects the first configured destination. `random` selects a destination for each resolution. `hash` deterministically selects from the original inbound bucket and key before rewrites. `ordered_failover` starts with the first configured destination and tries later destinations on errors returned while preparing, signing, or sending the upstream request and on upstream `5xx` responses. It does not fail over on upstream `4xx` responses such as `404`, `NoSuchKey`, or `NoSuchBucket`.
+
+### Hash Read Placement
+
+`hash` takes SHA-256 of the original inbound bucket, a literal `/`, and the
+original raw key. The first four digest bytes are an unsigned big-endian 32-bit
+integer, reduced modulo the destination count using wide unsigned arithmetic.
+The result is a zero-based index in the configured destination order, identical
+on 32-bit and 64-bit builds. Adding, removing, or reordering destinations can
+change selection.
+
+Hash inputs precede rewrites and preserve raw path bytes: `%2F`, `%2f`, and `/`
+can select different destinations. `ListObjectsV2` and `HeadBucket` use an empty
+key; list `prefix`, `start-after`, and continuation tokens do not affect the hash.
+Object reads can therefore select a different replica from the bucket listing.
+Use equivalent replicas for this workflow. Hashing does not distribute writes:
+`dispatch = "first"` writes to the first destination, and `dispatch = "all"`
+retains its configured fan-out behavior. No object data is moved or replicated
+by changing the hash calculation.
+
+**32-bit compatibility correction:** existing 64-bit mappings are preserved.
+Older 386 and 32-bit ARM builds folded high-bit hash words through signed
+arithmetic, producing different selections for some bucket/key/count combinations.
+Upgrading those builds corrects their selections to match 64-bit builds.
+
+Coordinate rollout so instances serving the same workload use the same hash
+algorithm and ordered destination configuration. Old 32-bit instances can
+disagree with corrected instances and with 64-bit instances. A changed backend
+between listing pages can invalidate a continuation token or produce inconsistent
+results. Finish pagination with stable routing before changing selection, or
+restart affected listings after rollout. Tokens remain opaque and unmodified;
+they encode no proxy-managed backend affinity, and the proxy provides neither
+backend-pinned cursors nor merged pagination.
 
 ## Rewrites
 

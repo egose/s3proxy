@@ -1,0 +1,31 @@
+title = "S3Proxy gitleaks configuration"
+
+# Scan with the default rule set. False positives from committed fixtures
+# (fake credentials by design) are handled with path allowlists below —
+# no inline suppression comments needed in source files.
+[extend]
+useDefault = true
+
+# Sandbox, test, and task-doc fixtures ship committed fake credentials
+# (e.g. sandbox-only MinIO/SeaweedFS keys, synthetic SigV4 fixtures,
+# lifecycle-test env writes). Flagging them would only add noise, so they
+# are excluded by path.
+[[allowlists]]
+description = "Committed fixtures use fake credentials by design"
+paths = [
+  '''sandbox/''',
+  '''tests/''',
+  '''_test\.go$''',
+  '''docs/tasks/''',
+]
+
+# Generated artifacts mirror the global `exclude` in .pre-commit-config.yaml:
+# dependency lockfiles and the generated changelog are never secret sources.
+[[allowlists]]
+description = "Lockfiles and generated artifacts"
+paths = [
+  '''pnpm-lock\.yaml$''',
+  '''package-lock\.json$''',
+  '''yarn\.lock$''',
+  '''CHANGELOG\.md$''',
+]
