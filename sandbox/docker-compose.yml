@@ -84,7 +84,7 @@ services:
     environment:
       SEAWEEDFS_BUCKET: ${SEAWEEDFS_BUCKET:?SEAWEEDFS_BUCKET is required}
       AWS_ACCESS_KEY_ID: anonymous
-      AWS_SECRET_ACCESS_KEY: anonymous # pragma: allowlist secret
+      AWS_SECRET_ACCESS_KEY: anonymous
       AWS_REGION: us-east-1
       AWS_EC2_METADATA_DISABLED: 'true'
     entrypoint:

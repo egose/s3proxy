@@ -86,6 +86,21 @@ Examples:
 
 That classification is what route `operations = [...]` filters use.
 
+### Unsupported Operation Headers
+
+A PUT carrying `X-Amz-Copy-Source`, or any S3 request carrying
+`X-Amz-Multipart-Upload-Id`, is unsupported and returns `501 NotImplemented`
+before routing or dispatch, subject to normal authentication and query/payload
+error precedence. Header names are case-insensitive. Presence counts even for
+empty or whitespace-only values and repeated fields, including an empty first
+value followed by a nonempty value. **Ordinary uploads must omit these headers
+entirely; empty values are no longer ignored.**
+
+The proxy remembers these selectors even if authentication removes an unsigned
+header. Supplied invalid signatures retain their authentication error, and
+explicit payload hashes are still verified after the signature and before the
+unsupported-operation response. CopyObject and multipart support are not enabled.
+
 ## Routing-Specific Behavior
 
 Routes are evaluated in config order and may stop or continue after a match.
@@ -147,7 +162,11 @@ namespace translation or URL decoding inside XML. `random` selection or
 `ordered_failover` can switch backends between pages, so tokens can be rejected
 or pages inconsistent. Choose a fixed backend for stable pagination; no cursor
 affinity or merged listing is provided. Hash-selected bucket listings are stable
-for unchanged destinations, but object reads can hash to another replica.
+when serving instances use the same hash algorithm and ordered destinations.
+Upgrading older 32-bit instances can change that selection; finish pagination
+with stable routing or restart affected listings after rollout. Object reads can
+hash to another replica. See [hash read placement](configuration.md#hash-read-placement)
+for the compatibility correction and rollout guidance.
 
 Successful XML transformation is bounded to 8 MiB input/output, 50,000 elements,
 four element levels, and five seconds, with earlier request/target cancellation

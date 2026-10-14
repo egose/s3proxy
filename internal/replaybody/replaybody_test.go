@@ -199,7 +199,7 @@ func TestReleaseReturnsBudgetAndClearsReplay(t *testing.T) {
 
 func TestReleaseIsIdempotentAndAcquiredReadersRemainValid(t *testing.T) {
 	budget := NewBudget(100, 100)
-	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", strings.NewReader("payload"))
+	req, err := http.NewRequest(http.MethodPut, "http://proxy.local/bucket/key", io.NopCloser(strings.NewReader("payload")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,64 +236,107 @@ func TestReleaseIsIdempotentAndAcquiredReadersRemainValid(t *testing.T) {
 
 func TestConcurrentGetBodyCancelBodyCloseAndRelease(t *testing.T) {
 	const iterations = 100
-	for i := 0; i < iterations; i++ {
-		budget := NewBudget(4096, 4096)
-		ctx, cancel := context.WithCancel(context.Background())
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://proxy.local/bucket/key", io.NopCloser(strings.NewReader(strings.Repeat("x", 1024))))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.ContentLength = 1024
-		if err := budget.Ensure(req); err != nil {
-			t.Fatal(err)
-		}
-		getBody := req.GetBody
-		body := req.Body
-		var wg sync.WaitGroup
-		for j := 0; j < 8; j++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				reader, err := getBody()
-				if err != nil {
-					t.Errorf("GetBody error = %v", err)
-					return
-				}
-				data, err := io.ReadAll(reader)
-				if err != nil {
-					t.Errorf("ReadAll error = %v", err)
-				}
-				if len(data) != 1024 {
-					t.Errorf("len(data) = %d, want 1024", len(data))
-				}
-				if err := reader.Close(); err != nil {
-					t.Errorf("reader close error = %v", err)
-				}
-			}()
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cancel()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := body.Close(); err != nil {
-				t.Errorf("body close error = %v", err)
+	const otherReservation = 17
+	data := replayLifecycleBytes()
+	for _, length := range []struct {
+		name  string
+		value int64
+	}{
+		{name: "known", value: int64(len(data))},
+		{name: "unknown", value: -1},
+	} {
+		t.Run(length.name, func(t *testing.T) {
+			budget := NewBudget(int64(len(data)), int64(len(data)+otherReservation))
+			if err := budget.reserve(otherReservation); err != nil {
+				t.Fatal(err)
 			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := Release(req); err != nil {
-				t.Errorf("release error = %v", err)
+			defer budget.release(otherReservation)
+			for i := 0; i < iterations; i++ {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				source := &trackedFragmentBody{Reader: bytes.NewReader(data)}
+				req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://proxy.local/bucket/key", source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.ContentLength = length.value
+				if err := budget.Ensure(req); err != nil {
+					t.Fatal(err)
+				}
+				getBody := req.GetBody
+				body := req.Body
+				acquired, err := getBody()
+				if err != nil {
+					t.Fatal(err)
+				}
+				start := make(chan struct{})
+				var wg sync.WaitGroup
+				for j := 0; j < 8; j++ {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						<-start
+						reader, err := getBody()
+						if err != nil {
+							t.Errorf("GetBody error = %v", err)
+							return
+						}
+						checkReplayBytes(t, reader, data)
+						if err := reader.Close(); err != nil {
+							t.Errorf("reader close error = %v", err)
+						}
+					}()
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					cancel()
+				}()
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					if err := body.Close(); err != nil {
+						t.Errorf("body close error = %v", err)
+					}
+				}()
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					if err := Release(req); err != nil {
+						t.Errorf("release error = %v", err)
+					}
+				}()
+				close(start)
+				finished := make(chan struct{})
+				go func() {
+					wg.Wait()
+					close(finished)
+				}()
+				select {
+				case <-finished:
+				case <-time.After(5 * time.Second):
+					t.Fatal("timed out waiting for concurrent replay release")
+				}
+				checkReplayBytes(t, acquired, data)
+				if err := acquired.Close(); err != nil {
+					t.Fatal(err)
+				}
+				later, err := getBody()
+				if err != nil {
+					t.Fatal(err)
+				}
+				checkReplayBytes(t, later, data)
+				if err := later.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if budget.Used() != otherReservation || source.closes.Load() != 1 {
+					t.Fatalf("used/closes = %d/%d, want %d/1", budget.Used(), source.closes.Load(), otherReservation)
+				}
 			}
-		}()
-		wg.Wait()
-		if budget.Used() != 0 {
-			t.Fatalf("used = %d, want 0", budget.Used())
-		}
+		})
 	}
 }
 

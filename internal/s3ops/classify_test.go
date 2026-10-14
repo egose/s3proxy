@@ -3,6 +3,7 @@ package s3ops
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/egose/s3proxy/internal/requestctx"
@@ -102,6 +103,61 @@ func TestClassify_PutObject(t *testing.T) {
 	op, _ := Classify(ctx)
 	if op != OpPutObject {
 		t.Errorf("expected PutObject, got %s", op)
+	}
+}
+
+func operationHeaderCases(name, value string) []struct {
+	name    string
+	headers http.Header
+	present bool
+} {
+	return []struct {
+		name    string
+		headers http.Header
+		present bool
+	}{
+		{"absent", nil, false},
+		{"ordinary headers", http.Header{"X-Amz-Meta-Owner": {"client"}, name + "-Suffix": {value}}, false},
+		{"nonempty", http.Header{name: {value}}, true},
+		{"empty first", http.Header{name: {"", value}}, true},
+		{"nonempty third", http.Header{name: {"", "", value}}, true},
+		{"empty only", http.Header{name: {""}}, true},
+		{"whitespace only", http.Header{name: {" \t "}}, true},
+		{"duplicate empty", http.Header{name: {"", ""}}, true},
+		{"duplicate nonempty", http.Header{name: {value, value}}, true},
+		{"lowercase", http.Header{strings.ToLower(name): {value}}, true},
+		{"mixed case", http.Header{strings.Replace(name, "Amz", "aMZ", 1): {"", value}}, true},
+		{"multiple casings", http.Header{name: {""}, strings.ToLower(name): {value}}, true},
+		{"nil values", http.Header{name: nil}, true},
+		{"no values", http.Header{name: {}}, true},
+	}
+}
+
+func TestClassify_CopySourceHeaderPresence(t *testing.T) {
+	for _, tt := range operationHeaderCases("X-Amz-Copy-Source", "/bucket/source") {
+		t.Run(tt.name, func(t *testing.T) {
+			op, err := Classify(&requestctx.Context{
+				Method: http.MethodPut, Bucket: "bucket", Key: "key", Headers: tt.headers,
+			})
+			want := OpPutObject
+			if tt.present {
+				want = OpCopyObject
+			}
+			if err != nil || op != want {
+				t.Fatalf("operation = %s, error = %v; want %s", op, err, want)
+			}
+		})
+	}
+}
+
+func TestIsMultipart_HeaderPresence(t *testing.T) {
+	for _, tt := range operationHeaderCases("X-Amz-Multipart-Upload-Id", "upload-id") {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &http.Request{Method: http.MethodPut, URL: &url.URL{Path: "/bucket/key"}, Header: tt.headers}
+			if got := IsMultipart(r); got != tt.present {
+				t.Fatalf("multipart = %t, want %t", got, tt.present)
+			}
+		})
 	}
 }
 

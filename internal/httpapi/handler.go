@@ -127,6 +127,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		xmls3.WriteInternalError(w, requestID)
 		return
 	}
+	multipart := s3ops.IsMultipart(r)
 
 	var (
 		principal   *auth.Principal
@@ -150,7 +151,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s3ops.IsMultipart(r) {
+	if multipart {
 		logger.Info("rejecting multipart", "operation", op)
 		xmls3.WriteNotImplemented(w, requestID)
 		return

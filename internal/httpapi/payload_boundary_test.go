@@ -179,7 +179,7 @@ func TestHandler_PayloadBoundaryHTTP(t *testing.T) {
 						f.mu.Lock()
 						logs := f.logs.String()
 						f.mu.Unlock()
-						for _, secret := range []string{"PAYLOAD_SECRET", "allowed-ak", "allowed-sk", "X-Amz-Signature=", "chunk-signature="} { // pragma: allowlist secret
+						for _, secret := range []string{"PAYLOAD_SECRET", "allowed-ak", "allowed-sk", "X-Amz-Signature=", "chunk-signature="} {
 							if strings.Contains(logs+string(data), secret) {
 								t.Errorf("diagnostics exposed %q", secret)
 							}
@@ -285,7 +285,7 @@ func TestHandler_PayloadMalformedQueryHTTP(t *testing.T) {
 			}
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			for _, secret := range []string{"SECRET", "%GG", "allowed-ak", "X-Amz-Signature="} { // pragma: allowlist secret
+			for _, secret := range []string{"SECRET", "%GG", "allowed-ak", "X-Amz-Signature="} {
 				if strings.Contains(f.logs.String()+string(data), secret) {
 					t.Errorf("diagnostics exposed %q", secret)
 				}

@@ -49,7 +49,7 @@ func TestBuildRejectsUpstreamRedirects(t *testing.T) {
 					src := strings.NewReplacer("${ADDRESS}", "127.0.0.1:0", "http://127.0.0.1:9000", upstream.URL, `prefix = "/"`, `prefix = "/bucket"`, `operations   = ["GetObject"]`, `operations   = ["`+op+`"]`, `mode = "none"`, `mode = "sigv4_static"
   client "restricted" {
     access_key = "client-ak"
-    secret_key = "client-sk" # pragma: allowlist secret
+    secret_key = "client-sk"
     allow_routes = ["all"]
     allow_ops = ["`+op+`"]
   }`).Replace(validConfig)

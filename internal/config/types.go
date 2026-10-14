@@ -94,9 +94,10 @@ type Client struct {
 }
 
 type StaticCredential struct {
-	Name      string
-	AccessKey string
-	SecretKey string
+	Name         string
+	AccessKey    string
+	SecretKey    string
+	SessionToken string
 }
 
 type S3Target struct {

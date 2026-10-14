@@ -148,6 +148,29 @@ If you run locally with a `.env` file, load it before invoking the proxy:
 set -a; . ./.env; set +a
 ```
 
+## Temporary Backend Credentials
+
+To use credentials issued externally by AWS STS or a compatible service, supply
+the complete access key, secret key, and session token in the target's referenced
+`credential "static"` block. For example, add
+`session_token = env("S3PROXY_TARGET_PRIMARY_SESSION_TOKEN")` alongside the
+backend key fields. Omit the field or leave its value empty for long-lived keys.
+See [credential fields](configuration.md#credentials) for the complete example.
+
+Backend credentials are a static startup snapshot. The proxy does not discover
+ambient AWS credentials, issue credentials, track expiry, or automatically
+refresh tokens. Before the external issuer's expiry deadline, obtain a new
+complete credential set, update the configuration/environment used at startup,
+run `s3proxy validate` and `s3proxy routes` with that environment, and restart
+each affected proxy instance. File or environment changes alone do not update
+the running snapshot; there is no hot reload. Offline validation cannot prove
+that credentials are valid or unexpired, so expiry monitoring and timely
+replacement remain operator-owned.
+
+This lifecycle applies to backend credentials. Inbound clients continue to use
+their separately configured keys; inbound security-token headers and presign
+query values cannot supply or override a target's token.
+
 ## Docker
 
 Build and run with the repo helpers:
@@ -337,6 +360,40 @@ Use `s3proxy validate --config ...` before rollouts to catch configuration error
 For integration troubleshooting, `make sandbox-logs` and `make sandbox-logs-follow` are the fastest way to inspect backend behavior.
 
 The proxy writes structured JSON logs to stdout. Each request receives an `X-Request-Id` response header; an inbound `X-Request-Id` is preserved, otherwise the proxy generates one. Request completion records include the method, status, response bytes, and duration. Dispatch records include route, operation, target, status, and sanitized errors when applicable. There is no runtime setting for log level, format, or destination in v1.
+
+Backend credential fields, including session tokens, are excluded from CLI
+topology and runtime logs. HCL type errors involving environment-derived tokens
+retain their source location, block/field, and diagnostic category while
+withholding the value. Keep credential values in fields rather than public
+declaration labels, config filenames, or request IDs.
+
+Malformed SigV4 header or presigned dates and invalid presigned expiry values
+produce `auth failed` records with the fixed cause `invalid X-Amz-Date` or
+`invalid X-Amz-Expires`. Rejected parameter values and parser excerpts are
+discarded, including wrapped parser causes; they are not included in logs or XML
+responses. Clients continue to receive `403 AccessDenied`, and request IDs and
+completion metadata remain available for correlation. Check the client's
+`X-Amz-Date` format and signing clock for date failures, and integer expiry seconds
+from 0 through 604800 (seven days) for expiry failures. The existing skew and
+expiry boundaries, including zero-expiry behavior, still apply.
+
+An object `key_template` can compile successfully and still fail when a request
+is missing a capture or an action cannot be evaluated. These failures produce a
+`rewrite failed` record with the fixed cause `key_template execution failed`,
+the public route name, and the request ID. Template text, action literals, capture
+names, and raw wrapped execution errors are discarded. Clients receive generic
+`500 InternalError` XML. All matched rewrites are checked before any backend
+dispatch, including later routes reached through `on_match = "continue"`, so a
+failed rewrite prevents object changes on every matched route.
+
+Use the route and request ID to locate the failing rule. Inspect its template and
+parser's named captures privately, check the capitalized `Bucket`, `Key`, and
+`Captures` fields and action argument types or indices, and reproduce with
+synthetic requests. `s3proxy validate` catches compilation errors but cannot prove
+that all runtime captures or action inputs will be valid. Invalid rewrite shapes
+and unsafe namespace/list queries retain `400 InvalidRequest`. `HeadBucket`
+ignores object templates and applies only the bucket override; `ListObjectsV2`
+keeps its [restricted prefix-template contract](configuration.md#rewrites).
 
 The proxy does not expose a Prometheus or other metrics endpoint in v1. Collect stdout logs and process or container metrics externally.
 

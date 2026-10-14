@@ -2,6 +2,7 @@ package router
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -187,14 +188,8 @@ func hashIndex(bucket, key string, n int) int {
 	h.Write([]byte("/"))
 	h.Write([]byte(key))
 	sum := h.Sum(nil)
-	var idx int
-	for _, b := range sum[:4] {
-		idx = (idx << 8) | int(b)
-	}
-	if idx < 0 {
-		idx = -idx
-	}
-	return idx % n
+	idx := binary.BigEndian.Uint32(sum[:4])
+	return int(uint64(idx) % uint64(n))
 }
 
 func cloneRoutes(routes []config.Route) []config.Route {

@@ -21,7 +21,7 @@ func (b *queryBody) Read(p []byte) (int, error) { b.reads++; return 0, io.EOF }
 func (*queryBody) Close() error                 { return nil }
 
 func TestSigV4_QueryBoundary(t *testing.T) {
-	const hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // pragma: allowlist secret
+	const hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	v := newSigV4Verifier(map[string]config.Client{"ak": {AccessKey: "ak", SecretKey: "sk"}}, "us-east-1", replaybody.NewBudget(1024, 2048))
 	for _, mode := range []string{"header", "presign"} {
 		for _, bad := range []string{"versionId=QUERY_SECRET%GG", "QUERY_SECRET%=v", "tagging=;QUERY_SECRET", "x-id=QUERY_SECRET%2", "X-Amz-Signature=QUERY_SECRET%GG"} {

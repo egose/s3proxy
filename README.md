@@ -35,6 +35,20 @@ All other query-key combinations are rejected before route dispatch. This includ
 
 Header authentication, presigned URLs, and outbound signing use S3 canonical URI rules: the escaped path is signed without a second round of URI escaping or path normalization. This corrects signature mismatches for spaces, literal percent characters, Unicode, and escaped separators in object keys. Custom clients using the AWS SDK v2 standalone signer must set `DisableURIPathEscaping = true`; signatures using the previous generic double-escaping behavior are not accepted for escaped paths.
 
+### Backend Credentials
+
+Backend `credential "static"` blocks support an optional `session_token` for
+externally issued temporary credentials, including AWS STS credentials. Omitted
+or empty tokens preserve long-lived access/secret key behavior. The selected
+target's token is signed outbound; inbound token headers and presign parameters
+are stripped. This field is separate from inbound client authentication.
+
+Credentials are a static startup snapshot. Replace the complete backend
+credential set and restart before expiry; the proxy performs no STS calls,
+ambient credential discovery, or automatic refresh. See
+[credential configuration](website/docs/configuration.md#credentials) and
+[temporary credential operations](website/docs/operations.md#temporary-backend-credentials).
+
 ### Routing
 
 - path-style and virtual-hosted addressing
@@ -223,8 +237,9 @@ auth "main" {
 }
 
 credential "static" "primary" {
-  access_key = env("S3PROXY_TARGET_PRIMARY_ACCESS_KEY")
-  secret_key = env("S3PROXY_TARGET_PRIMARY_SECRET_KEY")
+  access_key    = env("S3PROXY_TARGET_PRIMARY_ACCESS_KEY")
+  secret_key    = env("S3PROXY_TARGET_PRIMARY_SECRET_KEY")
+  session_token = env("S3PROXY_TARGET_PRIMARY_SESSION_TOKEN")
 }
 
 target "s3" "primary" {
@@ -262,6 +277,21 @@ bucket "images" {
   route        = "images_rw"
 }
 ```
+
+Target endpoints must be absolute, hierarchical HTTP(S) URLs with a hostname,
+an optional decimal port in `0`–`65535`, and an optional escaped base path.
+DNS/IPv4 endpoints support both outbound addressing modes; bracketed IPv6
+endpoints require `force_path_style = true`, for example
+`http://[2001:db8::1]:9000/base%20path`.
+
+Configuration now rejects endpoint userinfo, queries (even a bare `?`), and
+fragments (even a bare `#`) that were previously discarded during forwarding.
+Remove those components and keep backend keys in the referenced
+`credential "static"` block. Escaped base paths, including `%2F`, `%3F`, and
+`%23`, remain supported. `validate` and `routes` check syntax offline without
+DNS, listener binding, or backend calls; unavailable endpoints still pass.
+See [endpoint URL validation](website/docs/configuration.md#endpoint-url-validation)
+for the complete contract and migration guidance.
 
 `replay_body_max_bytes` limits how much request body the proxy will buffer per request when it needs a replayable body, such as `dispatch = "all"`, `on_match = "continue"`, authenticated payload-hash verification, or unknown-length outbound uploads. `0` uses the built-in default of `33554432` bytes (`32 MiB`). Oversized replay attempts fail with `413 EntityTooLarge`. `replay_body_aggregate_max_bytes` limits retained replay buffers across the process; `0` uses the built-in default of `268435456` bytes (`256 MiB`). Aggregate exhaustion fails immediately with `503 SlowDown` instead of blocking request goroutines.
 
@@ -428,6 +458,15 @@ block labels remain visible.
   streaming. See [listing semantics](docs/design.md#listing-semantics).
 - For multi-destination routes, `read_preference` controls which destination
   is used for reads (`first` by default).
+- `hash` uses the unsigned big-endian first 32 bits of
+  SHA-256(original bucket + "/" + original raw key), modulo the destination count
+  in configured order. Existing 64-bit mappings are preserved; some selections
+  on older 386/32-bit ARM builds change to match them. Keep the hash algorithm and
+  ordered destination configuration consistent across serving instances. A
+  backend change during rollout can invalidate list tokens or make pages
+  inconsistent; finish listings with stable routing or restart affected listings
+  after rollout. Hashing only selects reads: write dispatch and stored objects are
+  unchanged. See [hash read placement](website/docs/configuration.md#hash-read-placement).
 - For multi-destination writes with `dispatch = "all"`, all destinations must
   succeed. Upstream HTTP failures return the primary upstream error response;
   transport or replay failures return a proxy error. Fan-out is not

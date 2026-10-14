@@ -110,10 +110,11 @@ type rawClient struct {
 }
 
 type rawCredential struct {
-	Type      string `hcl:"type,label"`
-	Name      string `hcl:"name,label"`
-	AccessKey string `hcl:"access_key"`
-	SecretKey string `hcl:"secret_key"`
+	Type         string `hcl:"type,label"`
+	Name         string `hcl:"name,label"`
+	AccessKey    string `hcl:"access_key"`
+	SecretKey    string `hcl:"secret_key"`
+	SessionToken string `hcl:"session_token,optional"`
 }
 
 type rawTarget struct {
@@ -240,9 +241,10 @@ func buildRuntime(raw *rawFile) (*Runtime, error) {
 			return nil, fmt.Errorf("duplicate credential.static %q", cr.Name)
 		}
 		creds[cr.Name] = StaticCredential{
-			Name:      cr.Name,
-			AccessKey: cr.AccessKey,
-			SecretKey: cr.SecretKey,
+			Name:         cr.Name,
+			AccessKey:    cr.AccessKey,
+			SecretKey:    cr.SecretKey,
+			SessionToken: cr.SessionToken,
 		}
 	}
 

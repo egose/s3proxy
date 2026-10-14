@@ -101,7 +101,7 @@ func (e *engine) Apply(ctx *requestctx.Context, rw config.RewriteRule, captures 
 		}
 		var buf bytes.Buffer
 		if err := rw.CompiledTemplate.Execute(&buf, data); err != nil {
-			return Result{}, fmt.Errorf("key_template execution failed: %w", err)
+			return Result{}, errors.New("key_template execution failed")
 		}
 		key = buf.String()
 	}

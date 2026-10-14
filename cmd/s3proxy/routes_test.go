@@ -43,10 +43,10 @@ func TestRoutesCLI(t *testing.T) {
 	}
 	defer occupied.Close()
 	values := map[string]string{
-		"ADDRESS": occupied.Addr().String(),
-		"ENDPOINT": strings.Replace(backend.URL, "http://", "http://PRIVATE_user:PRIVATE_password@", 1) +
-			"/PRIVATE_path?PRIVATE_query=PRIVATE_value#PRIVATE_fragment",
+		"ADDRESS":    occupied.Addr().String(),
+		"ENDPOINT":   backend.URL + "/PRIVATE_path%2FPRIVATE_base/%3FPRIVATE_query%23PRIVATE_fragment",
 		"TEXT":       "PRIVATE_literal\"quoted\n\\雪",
+		"TOKEN":      "PRIVATE_session-token/+=\"quoted\n\\雪",
 		"REGION":     "PRIVATE_region",
 		"HOST":       "PRIVATE_host.example.test",
 		"PREFIX":     "/PRIVATE_path",
@@ -123,7 +123,7 @@ func TestRoutesCLI(t *testing.T) {
 		assertTopologyJSON(t, stdout, expectedRoutesJSON)
 	})
 	for _, tc := range []struct{ name, old, replacement, value, want string }{
-		{"endpoint", `env("ROUTES_PRIVATE_ENDPOINT")`, `env("ROUTES_PRIVATE_INVALID")`, "http://PRIVATE_user:PRIVATE_password@example.test/%GG?PRIVATE_query", "invalid endpoint"}, // pragma: allowlist secret
+		{"endpoint", `env("ROUTES_PRIVATE_ENDPOINT")`, `env("ROUTES_PRIVATE_INVALID")`, "http://PRIVATE_user:PRIVATE_password@example.test/%GG?PRIVATE_query", "invalid endpoint"},
 		{"duration", `region = env("ROUTES_PRIVATE_REGION")`, "region = \"region\"\n timeout = env(\"ROUTES_PRIVATE_INVALID\")", "PRIVATE_duration", "invalid timeout"},
 		{"listener duration", `address = env("ROUTES_PRIVATE_ADDRESS")`, "address = \":0\"\n timeouts { read = env(\"ROUTES_PRIVATE_INVALID\") }", "PRIVATE_duration", "invalid read timeout"},
 		{"regex", `env("ROUTES_PRIVATE_REGEX")`, `env("ROUTES_PRIVATE_INVALID")`, "(?P<PRIVATE_\"雪>x)", "invalid pattern"},
@@ -140,6 +140,9 @@ func TestRoutesCLI(t *testing.T) {
 		{"auth", `mode = "sigv4_static"`, `mode = env("ROUTES_PRIVATE_INVALID")`, "PRIVATE_mode", "invalid mode"},
 		{"HCL evaluated key", `secret_key = env("ROUTES_PRIVATE_TEXT")`, `secret_key = {for v in [1, 2] : "derived-${env("ROUTES_PRIVATE_INVALID")}" => v}`, "PRIVATE_\"quoted\n\\雪", "Duplicate object key"},
 		{"HCL type", `path_style = true`, `path_style = env("ROUTES_PRIVATE_INVALID")`, "PRIVATE_\"quoted\n\\雪", "Unsuitable value type"},
+		{"session token type", `session_token = env("ROUTES_PRIVATE_TOKEN")`, `session_token = [env("ROUTES_PRIVATE_INVALID")]`, "PRIVATE_\"quoted\n\\雪", "Unsuitable value type"},
+		{"session token object key", `session_token = env("ROUTES_PRIVATE_TOKEN")`, `session_token = {(env("ROUTES_PRIVATE_INVALID")) = 1}`, "PRIVATE_\"quoted\n\\雪", "Unsuitable value type"},
+		{"session token duplicate key", `session_token = env("ROUTES_PRIVATE_TOKEN")`, `session_token = {for v in [1, 2] : env("ROUTES_PRIVATE_INVALID") => v}`, "PRIVATE_\"quoted\n\\雪", "Duplicate object key"},
 		{"empty operations", `["HeadObject", "GetObject"]`, `[]`, "", "at least one operation"},
 		{"omitted operations", `operations = ["HeadObject", "GetObject"]`, ``, "", "Missing required argument"},
 		{"wildcard operations", `["HeadObject", "GetObject"]`, `["*"]`, "", "unsupported operation"},
@@ -304,6 +307,7 @@ auth "main" {
 credential "static" "primary" {
   access_key = env("ROUTES_PRIVATE_TEXT")
   secret_key = env("ROUTES_PRIVATE_TEXT")
+  session_token = env("ROUTES_PRIVATE_TOKEN")
 }
 target "s3" "primary" {
   endpoint = env("ROUTES_PRIVATE_ENDPOINT")

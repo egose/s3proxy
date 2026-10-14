@@ -36,7 +36,7 @@ credential "static" "replica" {
 
 credential "static" "forbidden" {
   access_key = "forbidden-ak"
-  secret_key = "forbidden-sk" // pragma: allowlist secret
+  secret_key = "forbidden-sk"
 }
 
 target "s3" "primary" {

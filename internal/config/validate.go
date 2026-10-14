@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/egose/s3proxy/internal/namespace"
@@ -126,18 +127,42 @@ func validateTargets(targets map[string]S3Target) error {
 		if t.Endpoint == "" {
 			return fmt.Errorf("target.s3 %q: endpoint is required", name)
 		}
-		if t.EndpointURL == nil {
+		endpoint := t.EndpointURL
+		if endpoint == nil {
 			return fmt.Errorf("target.s3 %q: parsed endpoint is missing", name)
 		}
-		if !t.EndpointURL.IsAbs() {
+		if !endpoint.IsAbs() {
 			return fmt.Errorf("target.s3 %q: endpoint must be an absolute URL", name)
 		}
-		if t.EndpointURL.Host == "" {
-			return fmt.Errorf("target.s3 %q: endpoint host is required", name)
-		}
-		scheme := strings.ToLower(t.EndpointURL.Scheme)
+		scheme := strings.ToLower(endpoint.Scheme)
 		if scheme != "http" && scheme != "https" {
 			return fmt.Errorf("target.s3 %q: endpoint scheme must be http or https", name)
+		}
+		if endpoint.Opaque != "" {
+			return fmt.Errorf("target.s3 %q: endpoint opaque URLs are unsupported", name)
+		}
+		if endpoint.User != nil {
+			return fmt.Errorf("target.s3 %q: endpoint userinfo is unsupported; use a credential.static block", name)
+		}
+		if endpoint.RawQuery != "" || endpoint.ForceQuery {
+			return fmt.Errorf("target.s3 %q: endpoint query is unsupported", name)
+		}
+		if endpoint.Fragment != "" || endpoint.RawFragment != "" || strings.Contains(t.Endpoint, "#") {
+			return fmt.Errorf("target.s3 %q: endpoint fragment is unsupported", name)
+		}
+		if endpoint.Hostname() == "" {
+			return fmt.Errorf("target.s3 %q: endpoint hostname is required", name)
+		}
+		if _, err := url.Parse(endpoint.String()); err != nil {
+			return fmt.Errorf("target.s3 %q: invalid endpoint: %s", name, endpointCause(err))
+		}
+		if port := endpoint.Port(); port != "" {
+			if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+				return fmt.Errorf("target.s3 %q: endpoint port must be a decimal number between 0 and 65535", name)
+			}
+		}
+		if !t.ForcePathStyle && strings.HasPrefix(endpoint.Host, "[") {
+			return fmt.Errorf("target.s3 %q: endpoint bracketed hosts require force_path_style = true", name)
 		}
 		if t.Region == "" {
 			return fmt.Errorf("target.s3 %q: region is required", name)

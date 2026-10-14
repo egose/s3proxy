@@ -243,11 +243,21 @@ func install(req *http.Request, body *bufferedBody, budget *Budget) {
 		req.ContentLength = 0
 		return
 	}
-	payload := &replayPayload{body: body.body, chunks: body.chunks, length: body.length, charged: body.charged, budget: budget}
+	payload := &replayPayload{
+		body:     body.body,
+		chunks:   body.chunks,
+		length:   body.length,
+		charged:  body.charged,
+		budget:   budget,
+		released: make(chan struct{}),
+	}
 	if done := req.Context().Done(); done != nil {
 		go func() {
-			<-done
-			payload.release()
+			select {
+			case <-done:
+				payload.release()
+			case <-payload.released:
+			}
 		}()
 	}
 	req.GetBody = func() (io.ReadCloser, error) {
@@ -273,12 +283,13 @@ func (b *bufferedBody) release(budget *Budget) {
 }
 
 type replayPayload struct {
-	body    []byte
-	chunks  [][]byte
-	length  int64
-	charged int64
-	budget  *Budget
-	once    sync.Once
+	body     []byte
+	chunks   [][]byte
+	length   int64
+	charged  int64
+	budget   *Budget
+	released chan struct{}
+	once     sync.Once
 }
 
 func (p *replayPayload) reader() io.Reader {
@@ -291,6 +302,7 @@ func (p *replayPayload) reader() io.Reader {
 func (p *replayPayload) release() {
 	p.once.Do(func() {
 		p.budget.release(p.charged)
+		close(p.released)
 	})
 }
 

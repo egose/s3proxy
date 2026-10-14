@@ -137,8 +137,8 @@ func (b *redirectBody) Close() error             { b.closes++; return errors.New
 func TestClientRejectsRedirectCleanup(t *testing.T) {
 	for _, status := range []int{301, 302, 303, 307, 308} {
 		for name, location := range map[string]string{
-			"valid":     "http://user:REDIRECT_PASSWORD@elsewhere.test/REDIRECT_KEY?token=REDIRECT_QUERY",     // pragma: allowlist secret
-			"malformed": "http://user:REDIRECT_PASSWORD@elsewhere.test/REDIRECT_KEY/%GG?token=REDIRECT_QUERY", // pragma: allowlist secret
+			"valid":     "http://user:REDIRECT_PASSWORD@elsewhere.test/REDIRECT_KEY?token=REDIRECT_QUERY",
+			"malformed": "http://user:REDIRECT_PASSWORD@elsewhere.test/REDIRECT_KEY/%GG?token=REDIRECT_QUERY",
 			"missing":   "",
 		} {
 			t.Run(fmt.Sprintf("%d/%s", status, name), func(t *testing.T) {

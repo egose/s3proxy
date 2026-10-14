@@ -65,7 +65,7 @@ func TestHandler_QueryBoundary(t *testing.T) {
 			{"name invalid", "PUT", "/visible/key", "", "QUERY_SECRET%GG=value"},
 			{"name truncated", "PUT", "/visible/key", "", "QUERY_SECRET%=value"},
 			{"value truncated", "PUT", "/visible/key", "", "versionId=QUERY_SECRET%2"},
-			{"semicolon name", "DELETE", "/visible/key", "", "tagging;QUERY_SECRET=value"}, // pragma: allowlist secret
+			{"semicolon name", "DELETE", "/visible/key", "", "tagging;QUERY_SECRET=value"},
 			{"duplicate operation", "DELETE", "/visible/key", "x-id=DeleteObject", "x-id=QUERY_SECRET%GG"},
 			{"listing prefix", "GET", "/visible", "list-type=2", "prefix=QUERY_SECRET%GG"},
 			{"duplicate prefix", "GET", "/visible", "list-type=2&prefix=keep", "prefix=QUERY_SECRET%GG"},
@@ -116,7 +116,7 @@ func TestHandler_QueryBoundary(t *testing.T) {
 				f.mu.Lock()
 				logs := f.logs.String()
 				f.mu.Unlock()
-				for _, secret := range []string{"QUERY_SECRET", "%GG", "allowed-ak", "X-Amz-Signature="} { // pragma: allowlist secret
+				for _, secret := range []string{"QUERY_SECRET", "%GG", "allowed-ak", "X-Amz-Signature="} {
 					if strings.Contains(logs+string(data), secret) {
 						t.Errorf("diagnostics exposed %q", secret)
 					}

@@ -19,12 +19,12 @@ func TestValidateCLIEnvDiagnosticConfidentiality(t *testing.T) {
 	for _, tc := range []struct {
 		name, old, replacement, value, want string
 	}{
-		{"endpoint", `"http://127.0.0.1:9000"`, expr, "https://user:private-password@example.test/%GG?private-query", "invalid endpoint"}, // pragma: allowlist secret
+		{"endpoint", `"http://127.0.0.1:9000"`, expr, "https://user:private-password@example.test/%GG?private-query", "invalid endpoint"},
 		{"duration", `region           = "us-east-1"`, "region = \"us-east-1\"\n timeout = " + expr, "private\"quoted\n\\雪", "invalid timeout"},
 		{"template", `on_match     = "stop"`, "on_match = \"stop\"\n rewrite { key_template = " + expr + " }", "{{ privatefunction }}", "invalid key_template"},
 		{"reference", `parser       = "all"`, "parser = " + expr, "parser.private\"quoted\n\\雪", "unknown parser"},
 		{"enum", `dispatch     = "first"`, "dispatch = " + expr, "private\"quoted\n\\雪", "invalid dispatch"},
-		{"HCL", `secret_key = "secret"`, "secret_key = {for v in [1, 2] : " + expr + " => v}", "private\"quoted\n\\雪", "Duplicate object key"}, // pragma: allowlist secret
+		{"HCL", `secret_key = "secret"`, "secret_key = {for v in [1, 2] : " + expr + " => v}", "private\"quoted\n\\雪", "Duplicate object key"},
 		{"regex", "parser \"path_prefix\" \"all\" {\n  prefix = \"/\"", "parser \"bucket_regex\" \"all\" {\n pattern = " + expr, "(?P<private\"name>x)", "invalid pattern"},
 		{"listener duration", `address = "127.0.0.1:0"`, "address = \"127.0.0.1:0\"\n timeouts { read = " + expr + " }", "1privateunit", "invalid read timeout"},
 	} {
