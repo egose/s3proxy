@@ -66,6 +66,10 @@ const toc = [{
   "id": "targets",
   "level": 2
 }, {
+  "value": "Endpoint URL Validation",
+  "id": "endpoint-url-validation",
+  "level": 3
+}, {
   "value": "Parsers",
   "id": "parsers",
   "level": 2
@@ -73,6 +77,10 @@ const toc = [{
   "value": "Routes",
   "id": "routes",
   "level": 2
+}, {
+  "value": "Hash Read Placement",
+  "id": "hash-read-placement",
+  "level": 3
 }, {
   "value": "Rewrites",
   "id": "rewrites",
@@ -102,6 +110,7 @@ function _createMdxContent(props) {
     ol: "ol",
     p: "p",
     pre: "pre",
+    strong: "strong",
     ul: "ul",
     ...(0,lib/* useMDXComponents */.R)(),
     ...props.components
@@ -507,12 +516,49 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-hcl",
-        children: "credential \"static\" \"primary\" {\n  access_key = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n}\n"
+        children: "credential \"static\" \"primary\" {\n  access_key    = env(\"S3PROXY_TARGET_PRIMARY_ACCESS_KEY\")\n  secret_key    = env(\"S3PROXY_TARGET_PRIMARY_SECRET_KEY\")\n  session_token = env(\"S3PROXY_TARGET_PRIMARY_SESSION_TOKEN\")\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Only ", (0,jsx_runtime.jsx)(_components.code, {
         children: "credential \"static\" ..."
-      }), " is supported in v1."]
+      }), " is supported in v1. Its fields are:"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "access_key"
+        }), ": required, nonempty string"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "secret_key"
+        }), ": required, nonempty string"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "session_token"
+        }), ": optional string for externally issued temporary backend\ncredentials, such as an AWS STS access key / secret key / session token set"]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Tokens can be literal strings or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "env()"
+      }), " results and are loaded unchanged.\nOmitting ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "session_token"
+      }), ", setting it to ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "\"\""
+      }), ", or referencing an unset/empty\nenvironment variable preserves long-lived key behavior: no token is sent.\nThe example's token variable is therefore optional for long-lived keys."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The selected target uses only the credentials from its referenced block. A\nconfigured token is sent in ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Security-Token"
+      }), " and included in outbound SigV4\nsigned headers. Inbound token headers and presign query parameters are stripped\nbefore outbound signing; they cannot replace a configured token or reach a\ntokenless or different target. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "session_token"
+      }), " is backend-only and is not a field\nin an auth ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "client"
+      }), " block."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "static"
+      }), " means a startup snapshot, including environment-derived values. There\nare no STS calls, ambient AWS credential discovery, automatic refresh, or expiry\ntracking. Obtain replacement credentials externally, replace the complete set,\nand restart before expiry. Updating the config or environment does not refresh\na running process. Offline validation checks configuration, not credential\nvalidity or expiry; see ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/operations#temporary-backend-credentials",
+        children: "temporary backend credentials"
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "targets",
       children: "Targets"
@@ -569,6 +615,75 @@ function _createMdxContent(props) {
       }), ", which uses virtual-hosted outbound addressing. An omitted or zero ", (0,jsx_runtime.jsx)(_components.code, {
         children: "timeout"
       }), " adds no whole-request target deadline; a positive value covers the complete upstream exchange, including streaming the response body. The shared upstream transport separately uses a 10-second dial timeout, 10-second TLS handshake timeout, and 30-second response-header timeout."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "endpoint-url-validation",
+      children: "Endpoint URL Validation"
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "An endpoint must use hierarchical HTTP(S) URL syntax with a nonempty hostname,\nan optional port, and an optional base path. Supported examples include:"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["DNS: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "https://storage.example.com"
+        }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "https://storage.example.com:9000/base%2Fpath"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["IPv4: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "http://192.0.2.1:9000/base%20path"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["IPv6 with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "force_path_style = true"
+        }), ": ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "http://[2001:db8::1]:9000/base%20path"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Scoped IPv6 with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "force_path_style = true"
+        }), ": ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "http://[fe80::1%25eth0]:9000"
+        })]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Ports must be decimal numbers in ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "0"
+      }), "–", (0,jsx_runtime.jsx)(_components.code, {
+        children: "65535"
+      }), "; leading zeros are accepted. An\nomitted or empty port retains the HTTP(S) default. Named services and signed\nports are not valid endpoint URL ports. IPv6 literals must be bracketed and\nuse path-style addressing, including IPv4-mapped IPv6 and addresses with zones.\nThe virtual-hosted builder prefixes the bucket to the hostname, which cannot\nrepresent a bracketed IPv6 target. Set ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "force_path_style = true"
+      }), ", or configure\na DNS endpoint suitable for virtual-hosted bucket addressing."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Userinfo (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "user:password@"
+      }), "), queries (including an empty ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "?"
+      }), "), fragments\n(including an empty ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "#"
+      }), "), and opaque forms such as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "https:storage"
+      }), " are unsupported.\nEscaped base paths are preserved, including encoded separators and literal\nquestion/hash characters (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2F"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%3F"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%23"
+      }), "). These path bytes are not query or\nfragment components. Topology output omits the entire endpoint, including its path."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.strong, {
+        children: "Compatibility change:"
+      }), " previously, forwarding silently discarded endpoint\nuserinfo, query, and fragment components. Remove them from existing URLs;\nbackend access and secret keys belong in a separate ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "credential \"static\""
+      }), " block\nreferenced by the target's ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "credentials"
+      }), " field. URL userinfo does not configure\nbackend authentication. Correct empty hostnames and invalid/out-of-range ports,\nand enable path-style addressing for IPv6 targets before upgrading."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Shared configuration validation applies to ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "validate"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "routes"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "serve"
+      }), ".\nInvalid endpoints fail before success/topology output or runtime startup logging.\nErrors identify the target label and endpoint problem without including the URL,\nits component values, or underlying parser excerpts. Checks are syntax-only:\nno DNS or zone resolution, listener binding, or backend health calls occur.\nSyntactically valid unavailable endpoints and occupied ports still validate\noffline. Hostname naming policy and network allowlists are not added; actual\nresolution, connectivity, and backend credential validity remain runtime concerns."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "parsers",
       children: "Parsers"
@@ -740,6 +855,41 @@ function _createMdxContent(props) {
       }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
         children: "NoSuchBucket"
       }), "."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "hash-read-placement",
+      children: "Hash Read Placement"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "hash"
+      }), " takes SHA-256 of the original inbound bucket, a literal ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/"
+      }), ", and the\noriginal raw key. The first four digest bytes are an unsigned big-endian 32-bit\ninteger, reduced modulo the destination count using wide unsigned arithmetic.\nThe result is a zero-based index in the configured destination order, identical\non 32-bit and 64-bit builds. Adding, removing, or reordering destinations can\nchange selection."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Hash inputs precede rewrites and preserve raw path bytes: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2F"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "%2f"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/"
+      }), "\ncan select different destinations. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListObjectsV2"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "HeadBucket"
+      }), " use an empty\nkey; list ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefix"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "start-after"
+      }), ", and continuation tokens do not affect the hash.\nObject reads can therefore select a different replica from the bucket listing.\nUse equivalent replicas for this workflow. Hashing does not distribute writes:\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dispatch = \"first\""
+      }), " writes to the first destination, and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dispatch = \"all\""
+      }), "\nretains its configured fan-out behavior. No object data is moved or replicated\nby changing the hash calculation."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.strong, {
+        children: "32-bit compatibility correction:"
+      }), " existing 64-bit mappings are preserved.\nOlder 386 and 32-bit ARM builds folded high-bit hash words through signed\narithmetic, producing different selections for some bucket/key/count combinations.\nUpgrading those builds corrects their selections to match 64-bit builds."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Coordinate rollout so instances serving the same workload use the same hash\nalgorithm and ordered destination configuration. Old 32-bit instances can\ndisagree with corrected instances and with 64-bit instances. A changed backend\nbetween listing pages can invalidate a continuation token or produce inconsistent\nresults. Finish pagination with stable routing before changing selection, or\nrestart affected listings after rollout. Tokens remain opaque and unmodified;\nthey encode no proxy-managed backend affinity, and the proxy provides neither\nbackend-pinned cursors nor merged pagination."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "rewrites",
       children: "Rewrites"

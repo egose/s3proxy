@@ -62,6 +62,10 @@ const toc = [{
   "id": "request-classification",
   "level": 2
 }, {
+  "value": "Unsupported Operation Headers",
+  "id": "unsupported-operation-headers",
+  "level": 3
+}, {
   "value": "Routing-Specific Behavior",
   "id": "routing-specific-behavior",
   "level": 2
@@ -515,6 +519,21 @@ function _createMdxContent(props) {
       children: ["That classification is what route ", (0,jsx_runtime.jsx)(_components.code, {
         children: "operations = [...]"
       }), " filters use."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "unsupported-operation-headers",
+      children: "Unsupported Operation Headers"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["A PUT carrying ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Copy-Source"
+      }), ", or any S3 request carrying\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Multipart-Upload-Id"
+      }), ", is unsupported and returns ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "501 NotImplemented"
+      }), "\nbefore routing or dispatch, subject to normal authentication and query/payload\nerror precedence. Header names are case-insensitive. Presence counts even for\nempty or whitespace-only values and repeated fields, including an empty first\nvalue followed by a nonempty value. ", (0,jsx_runtime.jsx)(_components.strong, {
+        children: "Ordinary uploads must omit these headers\nentirely; empty values are no longer ignored."
+      })]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "The proxy remembers these selectors even if authentication removes an unsigned\nheader. Supplied invalid signatures retain their authentication error, and\nexplicit payload hashes are still verified after the signature and before the\nunsupported-operation response. CopyObject and multipart support are not enabled."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "routing-specific-behavior",
       children: "Routing-Specific Behavior"
@@ -617,7 +636,10 @@ function _createMdxContent(props) {
         children: "random"
       }), " selection or\n", (0,jsx_runtime.jsx)(_components.code, {
         children: "ordered_failover"
-      }), " can switch backends between pages, so tokens can be rejected\nor pages inconsistent. Choose a fixed backend for stable pagination; no cursor\naffinity or merged listing is provided. Hash-selected bucket listings are stable\nfor unchanged destinations, but object reads can hash to another replica."]
+      }), " can switch backends between pages, so tokens can be rejected\nor pages inconsistent. Choose a fixed backend for stable pagination; no cursor\naffinity or merged listing is provided. Hash-selected bucket listings are stable\nwhen serving instances use the same hash algorithm and ordered destinations.\nUpgrading older 32-bit instances can change that selection; finish pagination\nwith stable routing or restart affected listings after rollout. Object reads can\nhash to another replica. See ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/configuration#hash-read-placement",
+        children: "hash read placement"
+      }), "\nfor the compatibility correction and rollout guidance."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Successful XML transformation is bounded to 8 MiB input/output, 50,000 elements,\nfour element levels, and five seconds, with earlier request/target cancellation\ntaking precedence. Bodies close on every exit. Malformed XML, unsupported XML\nstructure, encoding mismatches, oversized responses, or keys outside the\nrequested namespace return HTTP ", (0,jsx_runtime.jsx)(_components.code, {
         children: "502"

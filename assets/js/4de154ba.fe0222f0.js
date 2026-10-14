@@ -50,6 +50,10 @@ const toc = [{
   "id": "environment-variables",
   "level": 2
 }, {
+  "value": "Temporary Backend Credentials",
+  "id": "temporary-backend-credentials",
+  "level": 2
+}, {
   "value": "Docker",
   "id": "docker",
   "level": 2
@@ -381,6 +385,26 @@ function _createMdxContent(props) {
         children: "set -a; . ./.env; set +a\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "temporary-backend-credentials",
+      children: "Temporary Backend Credentials"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["To use credentials issued externally by AWS STS or a compatible service, supply\nthe complete access key, secret key, and session token in the target's referenced\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "credential \"static\""
+      }), " block. For example, add\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "session_token = env(\"S3PROXY_TARGET_PRIMARY_SESSION_TOKEN\")"
+      }), " alongside the\nbackend key fields. Omit the field or leave its value empty for long-lived keys.\nSee ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/configuration#credentials",
+        children: "credential fields"
+      }), " for the complete example."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Backend credentials are a static startup snapshot. The proxy does not discover\nambient AWS credentials, issue credentials, track expiry, or automatically\nrefresh tokens. Before the external issuer's expiry deadline, obtain a new\ncomplete credential set, update the configuration/environment used at startup,\nrun ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "s3proxy validate"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "s3proxy routes"
+      }), " with that environment, and restart\neach affected proxy instance. File or environment changes alone do not update\nthe running snapshot; there is no hot reload. Offline validation cannot prove\nthat credentials are valid or unexpired, so expiry monitoring and timely\nreplacement remain operator-owned."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "This lifecycle applies to backend credentials. Inbound clients continue to use\ntheir separately configured keys; inbound security-token headers and presign\nquery values cannot supply or override a target's token."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "docker",
       children: "Docker"
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
@@ -635,6 +659,51 @@ function _createMdxContent(props) {
       }), " response header; an inbound ", (0,jsx_runtime.jsx)(_components.code, {
         children: "X-Request-Id"
       }), " is preserved, otherwise the proxy generates one. Request completion records include the method, status, response bytes, and duration. Dispatch records include route, operation, target, status, and sanitized errors when applicable. There is no runtime setting for log level, format, or destination in v1."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Backend credential fields, including session tokens, are excluded from CLI\ntopology and runtime logs. HCL type errors involving environment-derived tokens\nretain their source location, block/field, and diagnostic category while\nwithholding the value. Keep credential values in fields rather than public\ndeclaration labels, config filenames, or request IDs."
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Malformed SigV4 header or presigned dates and invalid presigned expiry values\nproduce ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "auth failed"
+      }), " records with the fixed cause ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "invalid X-Amz-Date"
+      }), " or\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "invalid X-Amz-Expires"
+      }), ". Rejected parameter values and parser excerpts are\ndiscarded, including wrapped parser causes; they are not included in logs or XML\nresponses. Clients continue to receive ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "403 AccessDenied"
+      }), ", and request IDs and\ncompletion metadata remain available for correlation. Check the client's\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "X-Amz-Date"
+      }), " format and signing clock for date failures, and integer expiry seconds\nfrom 0 through 604800 (seven days) for expiry failures. The existing skew and\nexpiry boundaries, including zero-expiry behavior, still apply."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["An object ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "key_template"
+      }), " can compile successfully and still fail when a request\nis missing a capture or an action cannot be evaluated. These failures produce a\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "rewrite failed"
+      }), " record with the fixed cause ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "key_template execution failed"
+      }), ",\nthe public route name, and the request ID. Template text, action literals, capture\nnames, and raw wrapped execution errors are discarded. Clients receive generic\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "500 InternalError"
+      }), " XML. All matched rewrites are checked before any backend\ndispatch, including later routes reached through ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "on_match = \"continue\""
+      }), ", so a\nfailed rewrite prevents object changes on every matched route."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Use the route and request ID to locate the failing rule. Inspect its template and\nparser's named captures privately, check the capitalized ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Bucket"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Key"
+      }), ", and\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Captures"
+      }), " fields and action argument types or indices, and reproduce with\nsynthetic requests. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "s3proxy validate"
+      }), " catches compilation errors but cannot prove\nthat all runtime captures or action inputs will be valid. Invalid rewrite shapes\nand unsafe namespace/list queries retain ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "400 InvalidRequest"
+      }), ". ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "HeadBucket"
+      }), "\nignores object templates and applies only the bucket override; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ListObjectsV2"
+      }), "\nkeeps its ", (0,jsx_runtime.jsx)(_components.a, {
+        href: "/docs/configuration#rewrites",
+        children: "restricted prefix-template contract"
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "The proxy does not expose a Prometheus or other metrics endpoint in v1. Collect stdout logs and process or container metrics externally."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
